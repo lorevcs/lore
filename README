@@ -52,7 +52,7 @@ why
 
 
 install
-        curl -fsSL https://raw.githubusercontent.com/raymondjacobson/lore/main/install.sh | sh
+        curl -fsSL https://lorevcs.com/install.sh | sh
 
         or, with rust already installed:
 

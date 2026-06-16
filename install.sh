@@ -1,7 +1,7 @@
 #!/bin/sh
 # lore installer.  builds lore from source with cargo and installs it.
 #
-#   curl -fsSL https://raw.githubusercontent.com/raymondjacobson/lore/main/install.sh | sh
+#   curl -fsSL https://lorevcs.com/install.sh | sh
 #
 set -eu
 
