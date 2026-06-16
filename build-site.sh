@@ -10,6 +10,9 @@ mkdir -p "$out"
 # the install script is served verbatim at lorevcs.com/install.sh
 cp install.sh "$out/install.sh"
 
+# brand favicon
+cp favicon.svg "$out/favicon.svg"
+
 # serve the script as text rather than offering it as a download
 cat > "$out/_headers" <<'EOF'
 /install.sh
@@ -27,6 +30,7 @@ EOF
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>lore</title>
 <meta name="description" content="the latent repository. version control for intent, not code.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   html { background: #e7e4dc; }
   body { margin: 0; padding: 2rem 1rem; display: flex; justify-content: center;
