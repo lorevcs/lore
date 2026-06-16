@@ -1,0 +1,135 @@
+             _yg@@@@g_
+            a@@@@P~P@@@,
+           g@@@@_@@g,@@@g_
+          j@@@@@_4@P_@@@@@
+          @@@@@@@@g@@@@@@@
+         j@@@@@@@@@@@@RP~
+         a@@@@@@P`
+         B@@@@@@
+         @@@@@@[
+         $@@@@@              @@
+         9@@@@@l          __ ~~
+         4@@@@@$          @@    B%
+_yyy      @@@@@@,            gg
+$@@@@     $@@@@@$            ~~
+@@@@@     `@@@@@@L     __yggy_
+@@@@@      $@@@@@@_  _g@@@@@@@@y    _a@@@@g_
+@@@@@      `@@@@@@@_ ~~~~~~=@@@@@, a@@@@@@=~
+@@@@@       9@@@@@@@@@@@@@$g_`~@@@a@@@P~_ya$@@@@@@gy    _yg@@@@@$gy_
+@@@@@       4@@@@@@@@@@@@@@@@@g,~@@@@~_a@@@@@@@@@@@~  y@@@@@@@@@@@@@$_
+@@@@@       @@@@@@@PF~~~~F@@@@@@y 0@ y@@@@@@PF~~FF  _@@@@@@F~~~~?@@@@@L
+@@@@@      $@@@@@F`        ~@@@@@, ' $@@@@F         @@@@@`        ~@@@@L
+@@@@@     a@@@@@$            @@@@$  4@@@@$         a@@@@yyyyyyyyyyy$@@@@
+@@@@@     B@@@@@[            $@@@@  4@@@@$         $@@@@@@@@@@@@@@@@@@@@
+@@@@@     t@@@@@$           _@@@@@  4@@@@l         4@@@@~~~~~~~~~~~~~~~`
+@@@@@      $@@@@@g_        y$@@@@^  4@@@@l          @@@@$_         __
+9@@@@@gyy   R@@@@@@aw____yg@@@@@'   4@@@@l          `@@@@@$yy___ya@@@g,
+ @@@@@@@@@_  ~4@@@@@@@@@@@@@@@F     4@@@@l            ~@@@@@@@@@@@@@@@^
+  ~?R@@@@RF     ~~=R@@@@@@PF~        @@@@^              ~~4@@@@@@@P~`
+
+the latent repository.  version control for intent, not code.
+
+
+lore does not track your code.  it tracks the prompts, notes and decisions
+that produced it.  you commit intent.  when you want code, you run lore
+materialize: it replays the accumulated intent into a brief, and an agent
+reconciles the working tree to match it.
+
+the code is build output.  the intent is the source.
+
+
+why
+        a normal vcs remembers every line you typed.  lore remembers why
+        you typed it.  rebuilding from intent does not hand you the same
+        bytes back.  it hands you the same behavior, the way two engineers
+        given one spec write two different programs that pass the same
+        tests.
+
+        so branching and merging aren't about text.  two people do
+        not fight over the same lines, they pile up intent.  merging two
+        branches merges two piles.  each entry is addressed by the hash of
+        its text.  there are no conflicts.  there is nothing to conflict.
+
+
+install
+        curl -fsSL https://raw.githubusercontent.com/raymondjacobson/lore/main/install.sh | sh
+
+        or, with rust already installed:
+
+        cargo install --git https://github.com/raymondjacobson/lore
+
+        a brew tap is planned.
+
+
+use
+        lore init                          scaffold .lore, drop AGENTS
+        lore add "build a url shortener" -k decision
+        lore add "links expire after 30 days"
+        lore status                        show staged intent
+        lore commit -m "initial intent"
+        lore log
+        lore materialize                   print the brief for an agent
+
+        branches and merges work like git:
+
+        lore checkout -b experiment
+        lore add "try base62 short codes"
+        lore commit -m "encoding experiment"
+        lore checkout main
+        lore merge experiment
+
+        materialize any point in history, by branch or commit:
+
+        lore materialize --ref experiment
+        lore materialize --ref 4b6f04 -o BRIEF.txt
+
+
+storage
+        everything sits under .lore, laid out like git:
+
+        HEAD            current branch
+        index           staged intent, not yet committed
+        objects/<id>    content addressed entries and commits
+        refs/heads/<b>  branch pointers
+
+        an entry is one unit of intent.  its id is the hash of its text,
+        so writing the same thing twice stores it once.  a commit groups
+        entries and points at its parents.  recording intent is one small
+        file write, cheap enough to run on every prompt.
+
+        materialize walks the commit graph, unions every entry it can
+        reach, sorts by time and prints the brief.  the brief is the
+        program.  the agent and the files on disk are the interpreter.
+
+
+agents
+        this file is also AGENTS.  lore init drops a copy into your
+        project so the coding agent reads it.  the rules:
+
+        1.  record intent before you write code.  on every prompt run:
+
+                lore add "what the user wants, in a sentence or two"
+
+            use -k decision for choices that bind later work, -k note for
+            context.  the default kind is prompt.  it is cheap, do it
+            often.
+
+        2.  commit related intent once a unit of work lands:
+
+                lore commit -m "short summary"
+
+        3.  to rebuild, materialize and reconcile the tree to the brief.
+            do not commit the brief.
+
+        record intent, not implementation.  "add rate limiting, 100 reqs
+        per minute per key" is intent.  "edited middleware.rs line 42" is
+        not.  the files are whatever they are.  lore remembers why.
+
+
+status
+        experimental.  the on disk format is small and will change.
+        patches welcome.
+
+
+license
+        MIT.  see LICENSE.
