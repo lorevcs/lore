@@ -5,7 +5,7 @@ edition = "2021"
 description = "The latent repository. A version control system that tracks intent, not code."
 license = "MIT"
 readme = "README"
-repository = "https://github.com/raymondjacobson/lore"
+repository = "https://github.com/lorevcs/lore"
 
 [[bin]]
 name = "lore"

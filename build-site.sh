@@ -56,7 +56,7 @@ EOF
 EOF
 	sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
 	    -e 's#https://lorevcs.com/install.sh#<a href="https://lorevcs.com/install.sh">https://lorevcs.com/install.sh</a>#g' \
-	    -e 's#https://github.com/raymondjacobson/lore#<a href="https://github.com/raymondjacobson/lore">https://github.com/raymondjacobson/lore</a>#g' \
+	    -e 's#https://github.com/lorevcs/lore#<a href="https://github.com/lorevcs/lore">https://github.com/lorevcs/lore</a>#g' \
 	    README
 	cat <<'EOF'
 </pre></main>

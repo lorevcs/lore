@@ -5,7 +5,7 @@
 #
 set -eu
 
-repo="https://github.com/raymondjacobson/lore"
+repo="https://github.com/lorevcs/lore"
 
 note() { printf 'lore: %s\n' "$*" >&2; }
 

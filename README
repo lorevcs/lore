@@ -28,7 +28,7 @@ $@@@@     $@@@@@$            ~~
   ~?R@@@@RF     ~~=R@@@@@@PF~        @@@@^              ~~4@@@@@@@P~`
 
 the latent repository.  version control for intent, not code.
-https://github.com/raymondjacobson/lore
+https://github.com/lorevcs/lore
 
 
 lore does not track your code.  it tracks the prompts, notes and decisions
@@ -57,7 +57,7 @@ install
 
         or, with rust already installed:
 
-        cargo install --git https://github.com/raymondjacobson/lore
+        cargo install --git https://github.com/lorevcs/lore
 
         a brew tap is planned.
 
