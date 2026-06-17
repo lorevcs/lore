@@ -35,14 +35,20 @@ EOF
   html { background: #e7e4dc; }
   body { margin: 0; padding: 2rem 1rem; display: flex; justify-content: center;
     font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
-    color: #1a1a1a; }
+    color: #1a1a1a; -webkit-text-size-adjust: 100%; }
   main { background: #fffdf7; border: 2px solid #1a1a1a; box-shadow: 6px 6px 0 #1a1a1a;
     padding: 1.75rem 2rem; max-width: 100%; overflow-x: auto; }
-  pre { margin: 0; font: inherit; font-size: 13px; line-height: 1.45; white-space: pre; }
+  /* the widest line is ~74 monospace cols and the ascii art can't reflow, so
+     scale the type to fit the viewport, capped at 13px on wide screens */
+  pre { margin: 0; font: inherit; line-height: 1.5; white-space: pre;
+    font-size: clamp(6px, calc((100vw - 4rem) / 46), 13px); }
   a { color: #297e78; text-decoration: underline; }
   a:hover { background: #297e78; color: #fffdf7; text-decoration: none; }
   ::selection { background: #1a1a1a; color: #fffdf7; }
-  @media (max-width: 640px) { pre { font-size: 10px; } main { padding: 1rem; } }
+  @media (max-width: 720px) {
+    body { padding: 0.6rem; }
+    main { padding: 1rem; box-shadow: 4px 4px 0 #1a1a1a; }
+  }
 </style>
 </head>
 <body>
