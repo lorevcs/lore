@@ -85,6 +85,12 @@ use
         lore materialize --ref 4b6f04 -o BRIEF.txt
 
 
+example
+        a worked example: an agent builds a feature from intent alone.
+
+        https://github.com/lorevcs/lore-example
+
+
 storage
         everything sits under .lore, laid out like git:
 

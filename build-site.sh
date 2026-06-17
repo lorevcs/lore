@@ -19,8 +19,8 @@ cat > "$out/_headers" <<'EOF'
   content-type: text/plain; charset=utf-8
 EOF
 
-# the landing page is the README, escaped and dropped into a <pre>, with the
-# two urls linkified. same copy, same monospace look.
+# the landing page is the README, escaped and dropped into a <pre>, with any
+# urls linkified. same copy, same monospace look.
 {
 	cat <<'EOF'
 <!doctype html>
@@ -55,8 +55,7 @@ EOF
 <main><pre>
 EOF
 	sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
-	    -e 's#https://lorevcs.com/install.sh#<a href="https://lorevcs.com/install.sh">https://lorevcs.com/install.sh</a>#g' \
-	    -e 's#https://github.com/lorevcs/lore#<a href="https://github.com/lorevcs/lore">https://github.com/lorevcs/lore</a>#g' \
+	    -e 's#\(https://[^ ]*\)#<a href="\1">\1</a>#g' \
 	    README
 	cat <<'EOF'
 </pre></main>
