@@ -417,7 +417,7 @@ fn render_brief(
     let _ = writeln!(s, "# Lore Materialization\n");
     let _ = writeln!(s, "Target: {reference} ({})", short(commit_id));
     let _ = writeln!(s, "Commits: {commits}   Intent entries: {}", entries.len());
-    let _ = writeln!(s, "Generated: {}\n", crate::time::format_unix(now));
+    let _ = writeln!(s, "Generated: {}\n", crate::time::format_ns(now));
     let _ = writeln!(
         s,
         "## How to use this brief\n\n\
@@ -436,7 +436,7 @@ fn render_brief(
             "### [{}] {} - {}",
             e.kind,
             e.author,
-            crate::time::format_unix(e.timestamp)
+            crate::time::format_ns(e.timestamp)
         );
         let _ = writeln!(s, "{}\n", e.text.trim());
     }
@@ -699,5 +699,18 @@ mod tests {
         r.add("note", "alice", &long, 1).unwrap();
         r.commit("alice", "c", 10).unwrap();
         assert!(r.materialize("HEAD", 100).unwrap().contains(&long));
+    }
+
+    #[test]
+    fn materialize_orders_intent_within_the_same_second() {
+        // Same wall-clock second, a few nanoseconds apart: the brief must still
+        // read in the order intent was recorded, not by hash.
+        let (_d, r) = repo();
+        let s = 1_700_000_000 * 1_000_000_000;
+        r.add("note", "alice", "make-red", s + 10).unwrap();
+        r.add("note", "alice", "swap", s + 20).unwrap();
+        r.commit("alice", "c", s + 30).unwrap();
+        let brief = r.materialize("HEAD", s + 40).unwrap();
+        assert!(brief.find("make-red").unwrap() < brief.find("swap").unwrap());
     }
 }

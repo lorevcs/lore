@@ -128,7 +128,7 @@ pub fn run(cli: Cli, cwd: &Path) -> Result<()> {
                 println!(
                     "{} {} {} - {}{merge} [{} intent]",
                     short(&id),
-                    crate::time::format_unix(c.timestamp),
+                    crate::time::format_ns(c.timestamp),
                     c.author,
                     c.message,
                     c.entries.len()
@@ -188,10 +188,12 @@ pub fn run(cli: Cli, cwd: &Path) -> Result<()> {
     Ok(())
 }
 
+// Unix nanoseconds. u64 holds nanoseconds until well past year 2500, and the
+// resolution keeps intent recorded in the same second in true order.
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
 }
 

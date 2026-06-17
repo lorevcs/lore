@@ -1,7 +1,10 @@
-//! Minimal Unix-seconds to UTC formatting, so Lore needs no date dependency.
+//! Minimal Unix-nanoseconds to UTC formatting, so Lore needs no date dependency.
 
-/// Format Unix seconds as `YYYY-MM-DD HH:MM:SS UTC`.
-pub fn format_unix(secs: u64) -> String {
+/// Format Unix nanoseconds as `YYYY-MM-DD HH:MM:SS UTC`. Sub-second precision is
+/// dropped from the display, but kept in the stored value so intent recorded in
+/// the same second still sorts in the order it happened.
+pub fn format_ns(nanos: u64) -> String {
+    let secs = nanos / 1_000_000_000;
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
@@ -28,20 +31,30 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 mod tests {
     use super::*;
 
+    const S: u64 = 1_000_000_000; // nanoseconds per second
+
     #[test]
     fn epoch() {
-        assert_eq!(format_unix(0), "1970-01-01 00:00:00 UTC");
+        assert_eq!(format_ns(0), "1970-01-01 00:00:00 UTC");
     }
 
     #[test]
     fn known_timestamps() {
-        assert_eq!(format_unix(1_000_000_000), "2001-09-09 01:46:40 UTC");
-        assert_eq!(format_unix(1_700_000_000), "2023-11-14 22:13:20 UTC");
+        assert_eq!(format_ns(1_000_000_000 * S), "2001-09-09 01:46:40 UTC");
+        assert_eq!(format_ns(1_700_000_000 * S), "2023-11-14 22:13:20 UTC");
+    }
+
+    #[test]
+    fn drops_sub_second() {
+        assert_eq!(
+            format_ns(1_700_000_000 * S + 999_999_999),
+            "2023-11-14 22:13:20 UTC"
+        );
     }
 
     #[test]
     fn handles_leap_day() {
         // 2020-02-29 was a leap day; 1582934400 is its midnight UTC.
-        assert_eq!(format_unix(1_582_934_400), "2020-02-29 00:00:00 UTC");
+        assert_eq!(format_ns(1_582_934_400 * S), "2020-02-29 00:00:00 UTC");
     }
 }

@@ -16,7 +16,7 @@ pub struct Entry {
     pub kind: String,
     /// Who first recorded this intent.
     pub author: String,
-    /// Unix seconds when it was first recorded.
+    /// Unix nanoseconds when it was first recorded.
     pub timestamp: u64,
     /// The intent itself.
     pub text: String,
