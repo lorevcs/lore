@@ -181,7 +181,6 @@ mod tests {
 
     fn sample_entry(text: &str) -> (String, Vec<u8>) {
         let obj = Object::Entry(Entry {
-            kind: "note".into(),
             author: Identity::new("ray", "ray@x"),
             timestamp: 1,
             text: text.into(),
@@ -290,7 +289,7 @@ mod tests {
         let a_dir = TempDir::new().unwrap();
         let a = crate::repo::Repo::init(a_dir.path()).unwrap();
         let ray = Identity::new("ray", "ray@x");
-        a.add("decision", &ray, "use sqlite", 1).unwrap();
+        a.add(&ray, "use sqlite", 1).unwrap();
         a.commit(&ray, "c1", 10).unwrap();
         let mut cfg = a.config().unwrap();
         cfg.remotes

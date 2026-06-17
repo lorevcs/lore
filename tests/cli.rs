@@ -35,7 +35,7 @@ fn full_intent_lifecycle() {
     assert!(p.join(".lore").is_dir());
     assert!(p.join("AGENTS.md").is_file());
 
-    ok(p, &["add", "use sqlite for storage", "-k", "decision"]);
+    ok(p, &["add", "use sqlite for storage"]);
     ok(p, &["add", "the cli should mirror git"]);
 
     let status = ok(p, &["status"]);
@@ -124,7 +124,7 @@ fn remote_push_and_clone_round_trip() {
 
     ok(&a, &["init"]);
     ok(&a, &["config", "user.email", "tester@lore.test"]);
-    ok(&a, &["add", "use sqlite for storage", "-k", "decision"]);
+    ok(&a, &["add", "use sqlite for storage"]);
     ok(&a, &["commit", "-m", "initial intent"]);
 
     // identity = name from env, email from config

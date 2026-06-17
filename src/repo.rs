@@ -258,12 +258,11 @@ impl Repo {
 
     /// Stage one unit of intent. Fast by design: one object write and one
     /// append to the index.
-    pub fn add(&self, kind: &str, who: &Identity, text: &str, now: u64) -> Result<String> {
+    pub fn add(&self, who: &Identity, text: &str, now: u64) -> Result<String> {
         if text.trim().is_empty() {
             bail!("refusing to record empty intent");
         }
         let id = self.write_object(&Object::Entry(Entry {
-            kind: kind.into(),
             author: who.clone(),
             timestamp: now,
             text: text.into(),
@@ -533,8 +532,7 @@ fn render_brief(
     for (_, e) in entries {
         let _ = writeln!(
             s,
-            "### [{}] {} - {}",
-            e.kind,
+            "### {} - {}",
             e.author.label(),
             crate::time::format_ns(e.timestamp)
         );
@@ -616,9 +614,9 @@ mod tests {
     #[test]
     fn add_stages_and_dedupes() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "use sqlite", 1).unwrap();
-        r.add("note", &who("bob"), "use sqlite", 2).unwrap(); // identical intent
-        r.add("decision", &who("alice"), "ship it", 3).unwrap();
+        r.add(&who("alice"), "use sqlite", 1).unwrap();
+        r.add(&who("bob"), "use sqlite", 2).unwrap(); // identical intent
+        r.add(&who("alice"), "ship it", 3).unwrap();
         let staged = r.status().unwrap().staged;
         assert_eq!(staged.len(), 2);
     }
@@ -626,13 +624,13 @@ mod tests {
     #[test]
     fn empty_intent_is_rejected() {
         let (_d, r) = repo();
-        assert!(r.add("note", &who("alice"), "   ", 1).is_err());
+        assert!(r.add(&who("alice"), "   ", 1).is_err());
     }
 
     #[test]
     fn commit_advances_head_and_clears_index() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         let c = r.commit(&who("alice"), "first", 10).unwrap();
         assert_eq!(r.head_commit().unwrap(), Some(c.clone()));
         assert!(r.status().unwrap().staged.is_empty());
@@ -642,8 +640,7 @@ mod tests {
     #[test]
     fn identity_is_recorded_in_the_brief() {
         let (_d, r) = repo();
-        r.add("note", &Identity::new("Ray", "ray@x.com"), "a", 1)
-            .unwrap();
+        r.add(&Identity::new("Ray", "ray@x.com"), "a", 1).unwrap();
         r.commit(&who("alice"), "c", 10).unwrap();
         assert!(r
             .materialize("HEAD", 100)
@@ -654,9 +651,9 @@ mod tests {
     #[test]
     fn second_commit_links_to_first() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         let c1 = r.commit(&who("alice"), "first", 10).unwrap();
-        r.add("note", &who("alice"), "b", 2).unwrap();
+        r.add(&who("alice"), "b", 2).unwrap();
         let c2 = r.commit(&who("alice"), "second", 20).unwrap();
         assert_eq!(r.read_commit(&c2).unwrap().parents, vec![c1]);
     }
@@ -670,9 +667,9 @@ mod tests {
     #[test]
     fn log_is_newest_first() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         r.commit(&who("alice"), "first", 10).unwrap();
-        r.add("note", &who("alice"), "b", 2).unwrap();
+        r.add(&who("alice"), "b", 2).unwrap();
         r.commit(&who("alice"), "second", 20).unwrap();
         let msgs: Vec<_> = r
             .log()
@@ -692,7 +689,7 @@ mod tests {
     #[test]
     fn branch_and_checkout() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         r.commit(&who("alice"), "first", 10).unwrap();
         r.create_branch("feature").unwrap();
         assert!(r.create_branch("feature").is_err());
@@ -705,7 +702,7 @@ mod tests {
     #[test]
     fn checkout_dash_b_creates() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         r.commit(&who("alice"), "first", 10).unwrap();
         r.checkout("feature", true).unwrap();
         assert_eq!(r.current_branch().unwrap(), "feature");
@@ -720,10 +717,10 @@ mod tests {
     #[test]
     fn merge_fast_forwards() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         let base = r.commit(&who("alice"), "base", 10).unwrap();
         r.checkout("feature", true).unwrap();
-        r.add("note", &who("alice"), "b", 2).unwrap();
+        r.add(&who("alice"), "b", 2).unwrap();
         let tip = r.commit(&who("alice"), "feat", 20).unwrap();
         r.checkout("main", false).unwrap();
         assert_eq!(r.head_commit().unwrap(), Some(base));
@@ -737,7 +734,7 @@ mod tests {
     #[test]
     fn merge_up_to_date() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         r.commit(&who("alice"), "base", 10).unwrap();
         r.create_branch("feature").unwrap();
         assert_eq!(
@@ -749,13 +746,13 @@ mod tests {
     #[test]
     fn merge_creates_a_merge_commit_and_unions_intent() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "base", 1).unwrap();
+        r.add(&who("alice"), "base", 1).unwrap();
         r.commit(&who("alice"), "base", 10).unwrap();
         r.checkout("feature", true).unwrap();
-        r.add("note", &who("alice"), "from-feature", 2).unwrap();
+        r.add(&who("alice"), "from-feature", 2).unwrap();
         r.commit(&who("alice"), "feat", 20).unwrap();
         r.checkout("main", false).unwrap();
-        r.add("note", &who("alice"), "from-main", 3).unwrap();
+        r.add(&who("alice"), "from-main", 3).unwrap();
         r.commit(&who("alice"), "main work", 25).unwrap();
 
         let outcome = r
@@ -776,9 +773,9 @@ mod tests {
     #[test]
     fn materialize_is_chronological_and_deduped() {
         let (_d, r) = repo();
-        r.add("decision", &who("alice"), "second", 20).unwrap();
-        r.add("note", &who("bob"), "first", 10).unwrap();
-        r.add("note", &who("carol"), "first", 11).unwrap(); // duplicate intent text
+        r.add(&who("alice"), "second", 20).unwrap();
+        r.add(&who("bob"), "first", 10).unwrap();
+        r.add(&who("carol"), "first", 11).unwrap(); // duplicate intent text
         r.commit(&who("alice"), "c", 30).unwrap();
         let brief = r.materialize("HEAD", 100).unwrap();
         assert_eq!(brief.matches("first").count(), 1);
@@ -789,7 +786,7 @@ mod tests {
     #[test]
     fn resolve_by_head_branch_and_prefix() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         let c = r.commit(&who("alice"), "first", 10).unwrap();
         assert_eq!(r.resolve("HEAD").unwrap(), c);
         assert_eq!(r.resolve("main").unwrap(), c);
@@ -800,7 +797,7 @@ mod tests {
     #[test]
     fn resolve_handles_remote_tracking_ref() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.add(&who("alice"), "a", 1).unwrap();
         let c = r.commit(&who("alice"), "first", 10).unwrap();
         r.write_remote_ref("origin", "main", &c).unwrap();
         assert_eq!(
@@ -813,9 +810,9 @@ mod tests {
     #[test]
     fn materialize_specific_commit_excludes_later_intent() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "early", 1).unwrap();
+        r.add(&who("alice"), "early", 1).unwrap();
         let first = r.commit(&who("alice"), "first", 10).unwrap();
-        r.add("note", &who("alice"), "late", 2).unwrap();
+        r.add(&who("alice"), "late", 2).unwrap();
         r.commit(&who("alice"), "second", 20).unwrap();
         let brief = r.materialize(&first, 100).unwrap();
         assert!(brief.contains("early"));
@@ -825,10 +822,10 @@ mod tests {
     #[test]
     fn materialize_head_follows_the_current_branch() {
         let (_d, r) = repo();
-        r.add("note", &who("alice"), "on main", 1).unwrap();
+        r.add(&who("alice"), "on main", 1).unwrap();
         r.commit(&who("alice"), "main", 10).unwrap();
         r.checkout("feature", true).unwrap();
-        r.add("note", &who("alice"), "on feature", 2).unwrap();
+        r.add(&who("alice"), "on feature", 2).unwrap();
         r.commit(&who("alice"), "feat", 20).unwrap();
 
         // HEAD with no ref resolves to the current branch tip.
@@ -843,7 +840,7 @@ mod tests {
     fn long_intent_round_trips_in_full() {
         let (_d, r) = repo();
         let long = "x".repeat(5000);
-        r.add("note", &who("alice"), &long, 1).unwrap();
+        r.add(&who("alice"), &long, 1).unwrap();
         r.commit(&who("alice"), "c", 10).unwrap();
         assert!(r.materialize("HEAD", 100).unwrap().contains(&long));
     }
@@ -854,8 +851,8 @@ mod tests {
         // read in the order intent was recorded, not by hash.
         let (_d, r) = repo();
         let s = 1_700_000_000 * 1_000_000_000;
-        r.add("note", &who("alice"), "make-red", s + 10).unwrap();
-        r.add("note", &who("alice"), "swap", s + 20).unwrap();
+        r.add(&who("alice"), "make-red", s + 10).unwrap();
+        r.add(&who("alice"), "swap", s + 20).unwrap();
         r.commit(&who("alice"), "c", s + 30).unwrap();
         let brief = r.materialize("HEAD", s + 40).unwrap();
         assert!(brief.find("make-red").unwrap() < brief.find("swap").unwrap());

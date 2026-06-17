@@ -64,7 +64,7 @@ install
 
 use
         lore init                          scaffold .lore, drop AGENTS
-        lore add "build a url shortener" -k decision
+        lore add "build a url shortener"
         lore add "links expire after 30 days"
         lore status                        show staged intent
         lore commit -m "initial intent"
@@ -135,13 +135,15 @@ agents
         this file is also AGENTS.  lore init drops a copy into your
         project so the coding agent reads it.  the rules:
 
-        1.  record intent before you write code.  on every prompt run:
+        1.  before you write code, record the intent.  each turn, save
+            what the user asked for and the decisions you made:
 
-                lore add "what the user wants"
+                lore add "what the user said"
+                lore add "the choice you made and why"
 
-            use -k decision for choices that bind later work, -k note for
-            context.  the default kind is prompt.  it is cheap, do it
-            often.
+            intent, never code.  "rate limit the api, 100/min per key"
+            is intent.  "edited middleware.rs line 42" is not.  it is
+            cheap, do it often.
 
         2.  commit related intent once a unit of work lands:
 
@@ -149,10 +151,6 @@ agents
 
         3.  to rebuild, materialize and reconcile the tree to the brief.
             do not commit the brief.
-
-        record intent, not implementation.  "add rate limiting, 100 reqs
-        per minute per key" is intent.  "edited middleware.rs line 42" is
-        not.  the files are whatever they are.  lore remembers why.
 
 
 status

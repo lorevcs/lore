@@ -172,9 +172,9 @@ mod tests {
         let url = srv.path().display().to_string();
         let a_dir = TempDir::new().unwrap();
         let a = Repo::init(a_dir.path()).unwrap();
-        a.add("decision", &who("ray"), "use sqlite", 1).unwrap();
+        a.add(&who("ray"), "use sqlite", 1).unwrap();
         a.commit(&who("ray"), "c1", 10).unwrap();
-        a.add("note", &who("ray"), "links expire", 2).unwrap();
+        a.add(&who("ray"), "links expire", 2).unwrap();
         a.commit(&who("ray"), "c2", 20).unwrap();
         with_origin(&a, &url);
 
@@ -203,7 +203,7 @@ mod tests {
         let url = srv.path().display().to_string();
         let a_dir = TempDir::new().unwrap();
         let a = Repo::init(a_dir.path()).unwrap();
-        a.add("note", &who("ray"), "one", 1).unwrap();
+        a.add(&who("ray"), "one", 1).unwrap();
         a.commit(&who("ray"), "c1", 10).unwrap();
         with_origin(&a, &url);
         push(&a, "origin", "main").unwrap();
@@ -211,7 +211,7 @@ mod tests {
         let c_dir = TempDir::new().unwrap();
         let c = clone(&url, &c_dir.path().join("c"), None).unwrap();
 
-        a.add("note", &who("ray"), "two", 2).unwrap();
+        a.add(&who("ray"), "two", 2).unwrap();
         let a2 = a.commit(&who("ray"), "c2", 20).unwrap();
         push(&a, "origin", "main").unwrap();
 
@@ -227,18 +227,18 @@ mod tests {
         let url = srv.path().display().to_string();
         let a_dir = TempDir::new().unwrap();
         let a = Repo::init(a_dir.path()).unwrap();
-        a.add("note", &who("ray"), "base", 1).unwrap();
+        a.add(&who("ray"), "base", 1).unwrap();
         a.commit(&who("ray"), "base", 10).unwrap();
         with_origin(&a, &url);
         push(&a, "origin", "main").unwrap();
 
         let c_dir = TempDir::new().unwrap();
         let c = clone(&url, &c_dir.path().join("c"), None).unwrap();
-        c.add("note", &who("cara"), "from c", 2).unwrap();
+        c.add(&who("cara"), "from c", 2).unwrap();
         c.commit(&who("cara"), "c work", 20).unwrap();
         push(&c, "origin", "main").unwrap();
 
-        a.add("note", &who("ray"), "from a", 3).unwrap();
+        a.add(&who("ray"), "from a", 3).unwrap();
         a.commit(&who("ray"), "a work", 30).unwrap();
         let err = push(&a, "origin", "main").unwrap_err().to_string();
         assert!(err.contains("non-fast-forward"), "got: {err}");
@@ -250,7 +250,7 @@ mod tests {
         let url = srv.path().display().to_string();
         let a_dir = TempDir::new().unwrap();
         let a = Repo::init(a_dir.path()).unwrap();
-        a.add("note", &who("ray"), "base", 1).unwrap();
+        a.add(&who("ray"), "base", 1).unwrap();
         a.commit(&who("ray"), "base", 10).unwrap();
         with_origin(&a, &url);
         push(&a, "origin", "main").unwrap();
@@ -258,7 +258,7 @@ mod tests {
         let c_dir = TempDir::new().unwrap();
         let c = clone(&url, &c_dir.path().join("c"), None).unwrap();
 
-        a.add("note", &who("ray"), "more", 2).unwrap();
+        a.add(&who("ray"), "more", 2).unwrap();
         let a2 = a.commit(&who("ray"), "c2", 20).unwrap();
         push(&a, "origin", "main").unwrap();
 
@@ -274,7 +274,7 @@ mod tests {
     fn push_to_unknown_remote_errors() {
         let a_dir = TempDir::new().unwrap();
         let a = Repo::init(a_dir.path()).unwrap();
-        a.add("note", &who("ray"), "x", 1).unwrap();
+        a.add(&who("ray"), "x", 1).unwrap();
         a.commit(&who("ray"), "c", 10).unwrap();
         assert!(push(&a, "origin", "main").is_err());
     }

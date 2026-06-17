@@ -32,9 +32,6 @@ pub enum Command {
         /// The intent text
         #[arg(required = true, num_args = 1.., value_name = "TEXT")]
         text: Vec<String>,
-        /// Category: prompt, note, or decision
-        #[arg(short, long, default_value = "prompt")]
-        kind: String,
         /// Override the recorded author name
         #[arg(short, long)]
         author: Option<String>,
@@ -133,14 +130,13 @@ pub fn run(cli: Cli, cwd: &Path) -> Result<()> {
         }
         Command::Add {
             text,
-            kind,
             author,
             email,
         } => {
             let repo = Repo::discover(cwd)?;
             let who = identity(&repo, author, email)?;
-            let id = repo.add(&kind, &who, &text.join(" "), now())?;
-            println!("staged [{kind}] {}", short(&id));
+            let id = repo.add(&who, &text.join(" "), now())?;
+            println!("staged {}", short(&id));
         }
         Command::Status => {
             let repo = Repo::discover(cwd)?;
@@ -154,7 +150,7 @@ pub fn run(cli: Cli, cwd: &Path) -> Result<()> {
             } else {
                 println!("Staged intent:");
                 for (id, e) in st.staged {
-                    println!("  {} [{}] {}", short(&id), e.kind, oneline(&e.text));
+                    println!("  {} {}", short(&id), oneline(&e.text));
                 }
             }
         }
@@ -375,13 +371,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_add_with_flags() {
-        let cli = Cli::try_parse_from(["lore", "add", "use", "sqlite", "-k", "decision"]).unwrap();
+    fn parses_add() {
+        let cli = Cli::try_parse_from(["lore", "add", "use", "sqlite"]).unwrap();
         match cli.command {
-            Command::Add { text, kind, .. } => {
-                assert_eq!(text, vec!["use", "sqlite"]);
-                assert_eq!(kind, "decision");
-            }
+            Command::Add { text, .. } => assert_eq!(text, vec!["use", "sqlite"]),
             _ => panic!("wrong command"),
         }
     }
