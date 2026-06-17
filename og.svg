@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#e7e4dc"/>
+  <rect x="26" y="26" width="1148" height="578" fill="#fffdf7" stroke="#1a1a1a" stroke-width="6"/>
+  <!-- the lochness glyph, reused from the favicon -->
+  <g transform="translate(96,150) scale(3.5)">
+    <rect width="64" height="64" rx="15" fill="#41b8a8"/>
+    <g fill="#fbf6ea" stroke="#fbf6ea" stroke-linejoin="round" stroke-linecap="round">
+      <ellipse cx="24" cy="48" rx="14" ry="8.5" stroke="none"/>
+      <path d="M23 49 C18 37 23 24 33 20" fill="none" stroke-width="8"/>
+      <circle cx="38" cy="19" r="8.5" stroke="none"/>
+    </g>
+    <circle cx="41" cy="17" r="1.7" fill="#1b2d40"/>
+  </g>
+  <text x="368" y="318" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="200" font-weight="700" fill="#1a1a1a">lore</text>
+  <text x="100" y="470" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="42" fill="#1a1a1a">version control for intent, not code.</text>
+  <text x="100" y="540" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="34" fill="#297e78">lorevcs.com</text>
+</svg>

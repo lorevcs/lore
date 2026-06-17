@@ -10,8 +10,9 @@ mkdir -p "$out"
 # the install script is served verbatim at lorevcs.com/install.sh
 cp install.sh "$out/install.sh"
 
-# brand favicon
+# brand favicon and social-share (unfurl) image
 cp favicon.svg "$out/favicon.svg"
+cp og.png "$out/og.png"
 
 # serve the script as text rather than offering it as a download
 cat > "$out/_headers" <<'EOF'
@@ -19,8 +20,23 @@ cat > "$out/_headers" <<'EOF'
   content-type: text/plain; charset=utf-8
 EOF
 
-# the landing page is the README, escaped and dropped into a <pre>, with any
-# urls linkified. same copy, same monospace look.
+# let crawlers in and point them at the sitemap
+cat > "$out/robots.txt" <<'EOF'
+User-agent: *
+Allow: /
+Sitemap: https://lorevcs.com/sitemap.xml
+EOF
+
+cat > "$out/sitemap.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://lorevcs.com/</loc><changefreq>weekly</changefreq></url>
+</urlset>
+EOF
+
+# the landing page is the README. the ascii logo can't reflow, so it scales to
+# fit; the prose wraps at a readable size on narrow screens. same copy.
+split=$(awk '/^$/{print NR; exit}' README)
 {
 	cat <<'EOF'
 <!doctype html>
@@ -28,40 +44,69 @@ EOF
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>lore</title>
-<meta name="description" content="the latent repository. version control for intent, not code.">
+<title>lore - version control for intent, not code</title>
+<meta name="description" content="lore is version control for intent. Commit the prompts, notes, and decisions behind a codebase, then materialize it on demand. A tiny, git-like CLI in Rust.">
+<link rel="canonical" href="https://lorevcs.com/">
+<meta name="theme-color" content="#41b8a8">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="lore">
+<meta property="og:title" content="lore - version control for intent, not code">
+<meta property="og:description" content="Commit the prompts, notes, and decisions behind a codebase, then materialize it on demand. A tiny, git-like CLI.">
+<meta property="og:url" content="https://lorevcs.com/">
+<meta property="og:image" content="https://lorevcs.com/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="lore - version control for intent, not code">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="lore - version control for intent, not code">
+<meta name="twitter:description" content="Commit the prompts, notes, and decisions behind a codebase, then materialize it on demand.">
+<meta name="twitter:image" content="https://lorevcs.com/og.png">
+<meta name="twitter:image:alt" content="lore - version control for intent, not code">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"lore","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","description":"Version control for intent, not code. Commit the prompts, notes, and decisions behind a codebase, then materialize it on demand.","url":"https://lorevcs.com/","downloadUrl":"https://lorevcs.com/install.sh","license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/lorevcs/lore","author":{"@type":"Person","name":"Raymond Jacobson"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+</script>
 <style>
   html { background: #e7e4dc; }
   body { margin: 0; padding: 2rem 1rem; display: flex; justify-content: center;
     font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
     color: #1a1a1a; -webkit-text-size-adjust: 100%; }
   main { background: #fffdf7; border: 2px solid #1a1a1a; box-shadow: 6px 6px 0 #1a1a1a;
-    padding: 1.75rem 2rem; max-width: 100%; overflow-x: auto; }
-  /* the widest line is ~74 monospace cols and the ascii art can't reflow, so
-     scale the type to fit the viewport, capped at 13px on wide screens */
-  pre { margin: 0; font: inherit; line-height: 1.5; white-space: pre;
-    font-size: clamp(6px, calc((100vw - 4rem) / 46), 13px); }
+    padding: 1.75rem 2rem; max-width: 100%; }
+  /* the ascii logo can't reflow: scale it to fit, capped at 13px on wide screens */
+  .art { margin: 0 auto 1.25rem; width: fit-content; white-space: pre; overflow-x: auto;
+    font-size: clamp(6px, calc((100vw - 4rem) / 46), 13px); line-height: 1.2; }
+  /* prose stays readable and wraps on narrow screens */
+  .body { margin: 0; font: inherit; font-size: 13px; line-height: 1.55;
+    white-space: pre-wrap; overflow-wrap: anywhere; max-width: 76ch; }
   a { color: #297e78; text-decoration: underline; }
   a:hover { background: #297e78; color: #fffdf7; text-decoration: none; }
   ::selection { background: #1a1a1a; color: #fffdf7; }
   @media (max-width: 720px) {
     body { padding: 0.6rem; }
-    main { padding: 1rem; box-shadow: 4px 4px 0 #1a1a1a; }
+    main { padding: 1.1rem; box-shadow: 4px 4px 0 #1a1a1a; }
   }
 </style>
 </head>
 <body>
-<main><pre>
+<main>
+<pre class="art">
 EOF
-	sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
-	    -e 's#\(https://[^ ]*\)#<a href="\1">\1</a>#g' \
-	    README
+	head -n "$((split - 1))" README |
+		sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 	cat <<'EOF'
-</pre></main>
+</pre>
+<pre class="body">
+EOF
+	tail -n "+$((split + 1))" README |
+		sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
+			-e 's#\(https://[^ ]*\)#<a href="\1">\1</a>#g'
+	cat <<'EOF'
+</pre>
+</main>
 </body>
 </html>
 EOF
 } > "$out/index.html"
 
-printf 'built %s/index.html and %s/install.sh\n' "$out" "$out" >&2
+printf 'built %s with og image, robots, and sitemap\n' "$out" >&2
