@@ -42,19 +42,33 @@ render_body() {
 	awk '
 	function esc(s){ gsub(/&/,"\\&amp;",s); gsub(/</,"\\&lt;",s); gsub(/>/,"\\&gt;",s); return s }
 	function linkify(s){ gsub(/https:\/\/[^ <]+/,"<a href=\"&\">&</a>",s); return s }
-	function emit(s,   i,t,pre,ind,minind,j,allcmd,any){
-		# preformatted if columns are aligned (3+ spaces) or every line is a command
-		pre=0
-		for(i=s;i<n;i++){ t=L[i]; sub(/^[ \t]+/,"",t); if(t ~ /   /){ pre=1; break } }
-		if(!pre){
-			allcmd=1; any=0
-			for(i=s;i<n;i++){ t=L[i]; sub(/^[ \t]+/,"",t); if(t=="") continue; any=1; if(t !~ /^(lore|curl|cargo|git) /){ allcmd=0; break } }
-			if(any && allcmd) pre=1
-		}
+	function emit(s,   i,t,hasgap,allcmd,any,ind,minind,j,line,k,v){
+		# aligned columns (3+ spaces) -> dual render (pre for desktop, stacked for
+		# mobile); all-command block -> <pre>; anything else -> reflowing prose.
+		hasgap=0
+		for(i=s;i<n;i++){ t=L[i]; sub(/^[ \t]+/,"",t); if(t ~ /   /){ hasgap=1; break } }
+		allcmd=1; any=0
+		for(i=s;i<n;i++){ t=L[i]; sub(/^[ \t]+/,"",t); if(t=="") continue; any=1; if(t !~ /^(lore|curl|cargo|git) /){ allcmd=0; break } }
 		ind=(L[s] ~ /^[ \t]/)
-		if(pre){
-			minind=9999
-			for(i=s;i<n;i++){ match(L[i],/^ */); if(RLENGTH<minind) minind=RLENGTH }
+		minind=9999
+		for(i=s;i<n;i++){ match(L[i],/^ */); if(RLENGTH<minind) minind=RLENGTH }
+		if(minind==9999) minind=0
+		if(hasgap){
+			printf "<pre class=\"cols%s\">", (ind?" ind":"")
+			for(i=s;i<n;i++){ printf "%s%s",(i>s?"\n":""),linkify(esc(substr(L[i],minind+1))) }
+			printf "</pre>"
+			printf "<div class=\"cols-m%s\">", (ind?" ind":"")
+			for(i=s;i<n;i++){
+				line=substr(L[i],minind+1)
+				if(match(line,/  +/)){
+					k=substr(line,1,RSTART-1); v=substr(line,RSTART+RLENGTH)
+					printf "<div class=\"row\"><span class=\"k\">%s</span><span class=\"v\">%s</span></div>", linkify(esc(k)), linkify(esc(v))
+				} else {
+					printf "<div class=\"row\"><span class=\"k\">%s</span></div>", linkify(esc(line))
+				}
+			}
+			printf "</div>\n"
+		} else if(any && allcmd){
 			printf "<pre class=\"pre%s\">", (ind?" ind":"")
 			for(i=s;i<n;i++){ printf "%s%s",(i>s?"\n":""),linkify(esc(substr(L[i],minind+1))) }
 			printf "</pre>\n"
@@ -123,7 +137,8 @@ split=$(awk '/^$/{print NR; exit}' README)
   .body { max-width: 78ch; margin: 0 auto; font-size: 13px; line-height: 1.55; }
   .body h2 { font: inherit; font-size: 13px; margin: 1.9em 0 0; }
   .body .prose { margin: 0.7em 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .body .pre { margin: 0.7em 0 0; white-space: pre; }
+  .body .pre, .body .cols { margin: 0.7em 0 0; white-space: pre; }
+  .cols-m { display: none; }
   .body .ind { padding-left: 8ch; }
   a { color: #297e78; text-decoration: underline; }
   a:hover { background: #297e78; color: #fffdf7; text-decoration: none; }
@@ -134,6 +149,11 @@ split=$(awk '/^$/{print NR; exit}' README)
     body { padding: 0.6rem; }
     main { padding: 1.1rem; box-shadow: 4px 4px 0 #1a1a1a; }
     .body .pre { white-space: pre-wrap; }
+    .body .cols { display: none; }
+    .cols-m { display: block; margin: 0.7em 0 0; white-space: pre-wrap; }
+    .cols-m .row { margin-top: 0.3em; }
+    .cols-m .k { display: block; }
+    .cols-m .v { display: block; padding-left: 2ch; }
     .body .ind { padding-left: 1.5ch; }
   }
 </style>
