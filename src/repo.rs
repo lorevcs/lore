@@ -691,4 +691,13 @@ mod tests {
         assert!(on_main.contains("on main"));
         assert!(!on_main.contains("on feature"));
     }
+
+    #[test]
+    fn long_intent_round_trips_in_full() {
+        let (_d, r) = repo();
+        let long = "x".repeat(5000);
+        r.add("note", "alice", &long, 1).unwrap();
+        r.commit("alice", "c", 10).unwrap();
+        assert!(r.materialize("HEAD", 100).unwrap().contains(&long));
+    }
 }

@@ -201,13 +201,10 @@ fn default_author() -> String {
         .unwrap_or_else(|_| "anonymous".into())
 }
 
+// First line of an entry, for a one-line-per-entry status listing. Intent text
+// has no length limit; this only keeps `lore status` scannable.
 fn oneline(text: &str) -> String {
-    let line = text.trim().lines().next().unwrap_or("");
-    if line.chars().count() > 60 {
-        format!("{}...", line.chars().take(57).collect::<String>())
-    } else {
-        line.to_string()
-    }
+    text.trim().lines().next().unwrap_or("").to_string()
 }
 
 #[cfg(test)]
@@ -249,8 +246,8 @@ mod tests {
     }
 
     #[test]
-    fn oneline_truncates() {
+    fn oneline_is_untruncated_first_line() {
         assert_eq!(oneline("hi\nthere"), "hi");
-        assert_eq!(oneline(&"x".repeat(100)).len(), 60);
+        assert_eq!(oneline(&"x".repeat(100)).len(), 100);
     }
 }

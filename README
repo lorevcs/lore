@@ -109,7 +109,7 @@ agents
 
         1.  record intent before you write code.  on every prompt run:
 
-                lore add "what the user wants, in a sentence or two"
+                lore add "what the user wants"
 
             use -k decision for choices that bind later work, -k note for
             context.  the default kind is prompt.  it is cheap, do it
