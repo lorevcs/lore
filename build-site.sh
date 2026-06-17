@@ -16,6 +16,9 @@ cp og.png "$out/og.png"
 
 # serve the script as text rather than offering it as a download
 cat > "$out/_headers" <<'EOF'
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
 /install.sh
   content-type: text/plain; charset=utf-8
 EOF
@@ -45,11 +48,12 @@ split=$(awk '/^$/{print NR; exit}' README)
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>lore - version control for intent, not code</title>
-<meta name="description" content="lore is version control for intent. Commit the prompts, notes, and decisions behind a codebase, then materialize it on demand. A tiny, git-like CLI in Rust.">
+<meta name="description" content="lore is version control for intent, not code: commit the prompts and decisions behind a codebase, then materialize it on demand. A tiny, git-like CLI.">
 <link rel="canonical" href="https://lorevcs.com/">
 <meta name="theme-color" content="#41b8a8">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
+<meta property="og:locale" content="en_US">
 <meta property="og:site_name" content="lore">
 <meta property="og:title" content="lore - version control for intent, not code">
 <meta property="og:description" content="Commit the prompts, notes, and decisions behind a codebase, then materialize it on demand. A tiny, git-like CLI.">
@@ -64,7 +68,7 @@ split=$(awk '/^$/{print NR; exit}' README)
 <meta name="twitter:image" content="https://lorevcs.com/og.png">
 <meta name="twitter:image:alt" content="lore - version control for intent, not code">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"lore","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","description":"Version control for intent, not code. Commit the prompts, notes, and decisions behind a codebase, then materialize it on demand.","url":"https://lorevcs.com/","downloadUrl":"https://lorevcs.com/install.sh","license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/lorevcs/lore","author":{"@type":"Person","name":"Raymond Jacobson"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+{"@context":"https://schema.org","@graph":[{"@type":"WebSite","@id":"https://lorevcs.com/#website","name":"lore","alternateName":["lore vcs","the latent repository"],"url":"https://lorevcs.com/","description":"Version control for intent, not code."},{"@type":"SoftwareApplication","name":"lore","alternateName":"the latent repository","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","description":"Version control for intent, not code. Commit the prompts, notes, and decisions behind a codebase, then materialize it on demand with an AI agent.","url":"https://lorevcs.com/","downloadUrl":"https://lorevcs.com/install.sh","softwareVersion":"0.1","license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/lorevcs/lore","keywords":"version control for intent, version control for prompts, latent repository, track intent not code, materialize, ai agents, prompt engineering, git, rust, cli","sameAs":["https://github.com/lorevcs/lore"],"author":{"@type":"Person","name":"Raymond Jacobson"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}]}
 </script>
 <style>
   html { background: #e7e4dc; }
@@ -82,6 +86,9 @@ split=$(awk '/^$/{print NR; exit}' README)
   a { color: #297e78; text-decoration: underline; }
   a:hover { background: #297e78; color: #fffdf7; text-decoration: none; }
   ::selection { background: #1a1a1a; color: #fffdf7; }
+  /* a real heading for crawlers and screen readers; the visible one is ascii */
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   @media (max-width: 720px) {
     body { padding: 0.6rem; }
     main { padding: 1.1rem; box-shadow: 4px 4px 0 #1a1a1a; }
@@ -90,6 +97,7 @@ split=$(awk '/^$/{print NR; exit}' README)
 </head>
 <body>
 <main>
+<h1 class="sr-only">lore: version control for intent, not code</h1>
 <pre class="art">
 EOF
 	head -n "$((split - 1))" README |
