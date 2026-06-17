@@ -9,13 +9,15 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::config::Identity;
+
 /// One unit of intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     /// Free-form category, conventionally `prompt`, `note`, or `decision`.
     pub kind: String,
     /// Who first recorded this intent.
-    pub author: String,
+    pub author: Identity,
     /// Unix nanoseconds when it was first recorded.
     pub timestamp: u64,
     /// The intent itself.
@@ -27,7 +29,7 @@ pub struct Entry {
 pub struct Commit {
     /// Parent commit ids. Empty for the root, two or more for a merge.
     pub parents: Vec<String>,
-    pub author: String,
+    pub author: Identity,
     pub timestamp: u64,
     pub message: String,
     /// Entry ids recorded by this commit.
@@ -84,7 +86,7 @@ mod tests {
     fn entry(kind: &str, author: &str, ts: u64, text: &str) -> Object {
         Object::Entry(Entry {
             kind: kind.into(),
-            author: author.into(),
+            author: Identity::new(author, ""),
             timestamp: ts,
             text: text.into(),
         })
@@ -110,7 +112,7 @@ mod tests {
         let mk = |msg: &str, ts: u64| {
             Object::Commit(Commit {
                 parents: vec![],
-                author: "alice".into(),
+                author: Identity::new("alice", ""),
                 timestamp: ts,
                 message: msg.into(),
                 entries: vec!["e1".into()],

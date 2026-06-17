@@ -3,10 +3,12 @@
 //!
 //! Layout under `.lore/`:
 //! ```text
-//! HEAD             "ref: refs/heads/<branch>"
-//! index            newline-delimited staged entry ids
-//! objects/<id>     content-addressed entries and commits (JSON)
-//! refs/heads/<b>   a commit id
+//! HEAD                    "ref: refs/heads/<branch>"
+//! config                  JSON: local identity and named remotes
+//! index                   newline-delimited staged entry ids
+//! objects/<id>            content-addressed entries and commits (JSON)
+//! refs/heads/<b>          a commit id
+//! refs/remotes/<r>/<b>    last-known commit id on remote <r>
 //! ```
 
 use std::collections::HashSet;
@@ -15,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 
+use crate::config::{Config, Identity};
 use crate::object::{Commit, Entry, Object};
 
 /// The instructions dropped into a fresh repository for AI agents. This is the
@@ -46,22 +49,29 @@ pub enum Merge {
 }
 
 impl Repo {
-    /// Create a new repository under `root`. Also writes `AGENTS.md` unless one
-    /// already exists.
-    pub fn init(root: &Path) -> Result<Repo> {
+    /// Lay out an empty `.lore/`. Shared by `init` and `clone`.
+    pub(crate) fn scaffold(root: &Path) -> Result<Repo> {
         let dir = root.join(".lore");
         if dir.exists() {
             bail!("a Lore repository already exists at {}", dir.display());
         }
         fs::create_dir_all(dir.join("objects"))?;
         fs::create_dir_all(dir.join("refs/heads"))?;
+        fs::create_dir_all(dir.join("refs/remotes"))?;
         fs::write(dir.join("HEAD"), "ref: refs/heads/main\n")?;
         fs::write(dir.join("index"), "")?;
+        Ok(Repo { root: root.into() })
+    }
+
+    /// Create a new repository under `root`. Also writes `AGENTS.md` unless one
+    /// already exists.
+    pub fn init(root: &Path) -> Result<Repo> {
+        let repo = Repo::scaffold(root)?;
         let agents = root.join("AGENTS.md");
         if !agents.exists() {
             fs::write(&agents, AGENTS_TEMPLATE)?;
         }
-        Ok(Repo { root: root.into() })
+        Ok(repo)
     }
 
     /// Open the repository rooted exactly at `root`.
@@ -99,8 +109,31 @@ impl Repo {
     fn ref_path(&self, branch: &str) -> PathBuf {
         self.dir().join("refs/heads").join(branch)
     }
+    fn remote_ref_path(&self, remote: &str, branch: &str) -> PathBuf {
+        self.dir().join("refs/remotes").join(remote).join(branch)
+    }
     fn index_path(&self) -> PathBuf {
         self.dir().join("index")
+    }
+    fn config_path(&self) -> PathBuf {
+        self.dir().join("config")
+    }
+
+    // --- config ---
+
+    /// The repository config (identity and remotes); default when absent.
+    pub fn config(&self) -> Result<Config> {
+        match fs::read(self.config_path()) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Persist the repository config.
+    pub fn save_config(&self, config: &Config) -> Result<()> {
+        fs::write(self.config_path(), serde_json::to_vec_pretty(config)?)?;
+        Ok(())
     }
 
     // --- object store ---
@@ -123,7 +156,32 @@ impl Repo {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
-    fn read_commit(&self, id: &str) -> Result<Commit> {
+    /// Whether an object is already stored locally.
+    pub(crate) fn has_object(&self, id: &str) -> bool {
+        self.object_path(id).exists()
+    }
+
+    /// The raw stored bytes of an object, for handing to a remote.
+    pub(crate) fn object_bytes(&self, id: &str) -> Result<Vec<u8>> {
+        fs::read(self.object_path(id)).with_context(|| format!("no such object: {id}"))
+    }
+
+    /// Store object bytes received from a remote, after checking the bytes
+    /// actually hash to `id`, so a remote cannot poison the store.
+    pub(crate) fn write_object_bytes(&self, id: &str, bytes: &[u8]) -> Result<()> {
+        let obj: Object =
+            serde_json::from_slice(bytes).with_context(|| format!("invalid object {id}"))?;
+        if obj.id() != id {
+            bail!("object id mismatch: bytes for {id} hash to {}", obj.id());
+        }
+        let path = self.object_path(id);
+        if !path.exists() {
+            fs::write(path, bytes)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn read_commit(&self, id: &str) -> Result<Commit> {
         match self.read_object(id)? {
             Object::Commit(c) => Ok(c),
             Object::Entry(_) => bail!("{id} is not a commit"),
@@ -150,16 +208,32 @@ impl Repo {
 
     /// The commit id a branch points at, if it has one.
     pub fn read_ref(&self, branch: &str) -> Result<Option<String>> {
-        match fs::read_to_string(self.ref_path(branch)) {
-            Ok(s) if !s.trim().is_empty() => Ok(Some(s.trim().to_string())),
-            Ok(_) => Ok(None),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+        read_ref_file(&self.ref_path(branch))
     }
 
-    fn write_ref(&self, branch: &str, id: &str) -> Result<()> {
+    pub(crate) fn write_ref(&self, branch: &str, id: &str) -> Result<()> {
         fs::write(self.ref_path(branch), format!("{id}\n"))?;
+        Ok(())
+    }
+
+    /// The last-known commit a remote's branch pointed at, if tracked.
+    pub(crate) fn read_remote_ref(&self, remote: &str, branch: &str) -> Result<Option<String>> {
+        read_ref_file(&self.remote_ref_path(remote, branch))
+    }
+
+    pub(crate) fn write_remote_ref(&self, remote: &str, branch: &str, id: &str) -> Result<()> {
+        let path = self.remote_ref_path(remote, branch);
+        fs::create_dir_all(path.parent().expect("ref path has a parent"))?;
+        fs::write(path, format!("{id}\n"))?;
+        Ok(())
+    }
+
+    /// Point HEAD at a branch (without touching the branch ref).
+    pub(crate) fn set_head(&self, branch: &str) -> Result<()> {
+        fs::write(
+            self.dir().join("HEAD"),
+            format!("ref: refs/heads/{branch}\n"),
+        )?;
         Ok(())
     }
 
@@ -184,13 +258,13 @@ impl Repo {
 
     /// Stage one unit of intent. Fast by design: one object write and one
     /// append to the index.
-    pub fn add(&self, kind: &str, author: &str, text: &str, now: u64) -> Result<String> {
+    pub fn add(&self, kind: &str, who: &Identity, text: &str, now: u64) -> Result<String> {
         if text.trim().is_empty() {
             bail!("refusing to record empty intent");
         }
         let id = self.write_object(&Object::Entry(Entry {
             kind: kind.into(),
-            author: author.into(),
+            author: who.clone(),
             timestamp: now,
             text: text.into(),
         }))?;
@@ -217,7 +291,7 @@ impl Repo {
     }
 
     /// Record staged intent as a commit on the current branch.
-    pub fn commit(&self, author: &str, message: &str, now: u64) -> Result<String> {
+    pub fn commit(&self, who: &Identity, message: &str, now: u64) -> Result<String> {
         let entries = self.read_index()?;
         if entries.is_empty() {
             bail!("nothing staged to commit");
@@ -225,7 +299,7 @@ impl Repo {
         let parents = self.head_commit()?.into_iter().collect();
         let id = self.write_object(&Object::Commit(Commit {
             parents,
-            author: author.into(),
+            author: who.clone(),
             timestamp: now,
             message: message.into(),
             entries,
@@ -236,7 +310,7 @@ impl Repo {
     }
 
     /// Every commit reachable from `start` by following parents.
-    fn reachable(&self, start: &str) -> Result<HashSet<String>> {
+    pub(crate) fn reachable(&self, start: &str) -> Result<HashSet<String>> {
         let mut seen = HashSet::new();
         let mut stack = vec![start.to_string()];
         while let Some(id) = stack.pop() {
@@ -298,31 +372,41 @@ impl Repo {
         if name != self.current_branch()? && !self.ref_path(name).exists() {
             bail!("branch '{name}' does not exist");
         }
-        fs::write(self.dir().join("HEAD"), format!("ref: refs/heads/{name}\n"))?;
-        Ok(())
+        self.set_head(name)
     }
 
-    /// Merge `other` into the current branch. Because materialization unions the
-    /// whole commit graph, a merge only needs to join the two histories.
-    pub fn merge(&self, other: &str, author: &str, message: &str, now: u64) -> Result<Merge> {
+    /// Merge another branch into the current branch.
+    pub fn merge(&self, other: &str, who: &Identity, message: &str, now: u64) -> Result<Merge> {
         let other_id = self
             .read_ref(other)?
             .ok_or_else(|| anyhow!("branch '{other}' has no commits to merge"))?;
+        self.merge_commit(&other_id, who, message, now)
+    }
+
+    /// Merge a specific commit into the current branch. Because materialization
+    /// unions the whole commit graph, a merge only joins the two histories.
+    pub(crate) fn merge_commit(
+        &self,
+        other_id: &str,
+        who: &Identity,
+        message: &str,
+        now: u64,
+    ) -> Result<Merge> {
         let branch = self.current_branch()?;
         let Some(head) = self.head_commit()? else {
-            self.write_ref(&branch, &other_id)?;
-            return Ok(Merge::FastForward(other_id));
+            self.write_ref(&branch, other_id)?;
+            return Ok(Merge::FastForward(other_id.to_string()));
         };
-        if head == other_id || self.is_ancestor(&other_id, &head)? {
+        if head == other_id || self.is_ancestor(other_id, &head)? {
             return Ok(Merge::UpToDate);
         }
-        if self.is_ancestor(&head, &other_id)? {
-            self.write_ref(&branch, &other_id)?;
-            return Ok(Merge::FastForward(other_id));
+        if self.is_ancestor(&head, other_id)? {
+            self.write_ref(&branch, other_id)?;
+            return Ok(Merge::FastForward(other_id.to_string()));
         }
         let id = self.write_object(&Object::Commit(Commit {
-            parents: vec![head, other_id],
-            author: author.into(),
+            parents: vec![head, other_id.to_string()],
+            author: who.clone(),
             timestamp: now,
             message: message.into(),
             entries: self.read_index()?,
@@ -332,7 +416,8 @@ impl Repo {
         Ok(Merge::Merged(id))
     }
 
-    /// Resolve a ref to a commit id: `HEAD`, a branch name, or a commit id prefix.
+    /// Resolve a ref to a commit id: `HEAD`, a branch, a `<remote>/<branch>`
+    /// tracking ref, or a commit id prefix.
     pub fn resolve(&self, reference: &str) -> Result<String> {
         if reference == "HEAD" {
             return self
@@ -341,6 +426,11 @@ impl Repo {
         }
         if let Some(id) = self.read_ref(reference)? {
             return Ok(id);
+        }
+        if let Some((remote, branch)) = reference.split_once('/') {
+            if let Some(id) = self.read_remote_ref(remote, branch)? {
+                return Ok(id);
+            }
         }
         let mut hits = vec![];
         for entry in fs::read_dir(self.dir().join("objects"))? {
@@ -391,6 +481,16 @@ impl Repo {
     }
 }
 
+/// Read a ref file, returning the trimmed commit id or `None` if absent/empty.
+fn read_ref_file(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(s) if !s.trim().is_empty() => Ok(Some(s.trim().to_string())),
+        Ok(_) => Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Drop duplicate strings while preserving first-seen order.
 fn dedup(items: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -435,7 +535,7 @@ fn render_brief(
             s,
             "### [{}] {} - {}",
             e.kind,
-            e.author,
+            e.author.label(),
             crate::time::format_ns(e.timestamp)
         );
         let _ = writeln!(s, "{}\n", e.text.trim());
@@ -454,12 +554,17 @@ mod tests {
         (dir, repo)
     }
 
+    fn who(name: &str) -> Identity {
+        Identity::new(name, format!("{name}@test"))
+    }
+
     #[test]
     fn init_lays_out_the_store() {
         let (dir, _) = repo();
         let lore = dir.path().join(".lore");
         assert!(lore.join("objects").is_dir());
         assert!(lore.join("refs/heads").is_dir());
+        assert!(lore.join("refs/remotes").is_dir());
         assert_eq!(
             fs::read_to_string(lore.join("HEAD")).unwrap(),
             "ref: refs/heads/main\n"
@@ -494,11 +599,26 @@ mod tests {
     }
 
     #[test]
+    fn config_round_trips_on_disk() {
+        let (_d, r) = repo();
+        assert_eq!(r.config().unwrap(), Config::default());
+        let c = Config {
+            user: who("ray"),
+            remotes: std::collections::BTreeMap::from([(
+                "origin".to_string(),
+                crate::config::Remote { url: "/srv".into() },
+            )]),
+        };
+        r.save_config(&c).unwrap();
+        assert_eq!(r.config().unwrap(), c);
+    }
+
+    #[test]
     fn add_stages_and_dedupes() {
         let (_d, r) = repo();
-        r.add("note", "alice", "use sqlite", 1).unwrap();
-        r.add("note", "bob", "use sqlite", 2).unwrap(); // identical intent
-        r.add("decision", "alice", "ship it", 3).unwrap();
+        r.add("note", &who("alice"), "use sqlite", 1).unwrap();
+        r.add("note", &who("bob"), "use sqlite", 2).unwrap(); // identical intent
+        r.add("decision", &who("alice"), "ship it", 3).unwrap();
         let staged = r.status().unwrap().staged;
         assert_eq!(staged.len(), 2);
     }
@@ -506,42 +626,54 @@ mod tests {
     #[test]
     fn empty_intent_is_rejected() {
         let (_d, r) = repo();
-        assert!(r.add("note", "alice", "   ", 1).is_err());
+        assert!(r.add("note", &who("alice"), "   ", 1).is_err());
     }
 
     #[test]
     fn commit_advances_head_and_clears_index() {
         let (_d, r) = repo();
-        r.add("note", "alice", "a", 1).unwrap();
-        let c = r.commit("alice", "first", 10).unwrap();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        let c = r.commit(&who("alice"), "first", 10).unwrap();
         assert_eq!(r.head_commit().unwrap(), Some(c.clone()));
         assert!(r.status().unwrap().staged.is_empty());
         assert_eq!(r.read_commit(&c).unwrap().parents, Vec::<String>::new());
     }
 
     #[test]
+    fn identity_is_recorded_in_the_brief() {
+        let (_d, r) = repo();
+        r.add("note", &Identity::new("Ray", "ray@x.com"), "a", 1)
+            .unwrap();
+        r.commit(&who("alice"), "c", 10).unwrap();
+        assert!(r
+            .materialize("HEAD", 100)
+            .unwrap()
+            .contains("Ray <ray@x.com>"));
+    }
+
+    #[test]
     fn second_commit_links_to_first() {
         let (_d, r) = repo();
-        r.add("note", "alice", "a", 1).unwrap();
-        let c1 = r.commit("alice", "first", 10).unwrap();
-        r.add("note", "alice", "b", 2).unwrap();
-        let c2 = r.commit("alice", "second", 20).unwrap();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        let c1 = r.commit(&who("alice"), "first", 10).unwrap();
+        r.add("note", &who("alice"), "b", 2).unwrap();
+        let c2 = r.commit(&who("alice"), "second", 20).unwrap();
         assert_eq!(r.read_commit(&c2).unwrap().parents, vec![c1]);
     }
 
     #[test]
     fn commit_with_nothing_staged_errors() {
         let (_d, r) = repo();
-        assert!(r.commit("alice", "x", 1).is_err());
+        assert!(r.commit(&who("alice"), "x", 1).is_err());
     }
 
     #[test]
     fn log_is_newest_first() {
         let (_d, r) = repo();
-        r.add("note", "alice", "a", 1).unwrap();
-        r.commit("alice", "first", 10).unwrap();
-        r.add("note", "alice", "b", 2).unwrap();
-        r.commit("alice", "second", 20).unwrap();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.commit(&who("alice"), "first", 10).unwrap();
+        r.add("note", &who("alice"), "b", 2).unwrap();
+        r.commit(&who("alice"), "second", 20).unwrap();
         let msgs: Vec<_> = r
             .log()
             .unwrap()
@@ -560,8 +692,8 @@ mod tests {
     #[test]
     fn branch_and_checkout() {
         let (_d, r) = repo();
-        r.add("note", "alice", "a", 1).unwrap();
-        r.commit("alice", "first", 10).unwrap();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.commit(&who("alice"), "first", 10).unwrap();
         r.create_branch("feature").unwrap();
         assert!(r.create_branch("feature").is_err());
         assert_eq!(r.branches().unwrap(), vec!["feature", "main"]);
@@ -573,8 +705,8 @@ mod tests {
     #[test]
     fn checkout_dash_b_creates() {
         let (_d, r) = repo();
-        r.add("note", "alice", "a", 1).unwrap();
-        r.commit("alice", "first", 10).unwrap();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.commit(&who("alice"), "first", 10).unwrap();
         r.checkout("feature", true).unwrap();
         assert_eq!(r.current_branch().unwrap(), "feature");
     }
@@ -588,15 +720,15 @@ mod tests {
     #[test]
     fn merge_fast_forwards() {
         let (_d, r) = repo();
-        r.add("note", "alice", "a", 1).unwrap();
-        let base = r.commit("alice", "base", 10).unwrap();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        let base = r.commit(&who("alice"), "base", 10).unwrap();
         r.checkout("feature", true).unwrap();
-        r.add("note", "alice", "b", 2).unwrap();
-        let tip = r.commit("alice", "feat", 20).unwrap();
+        r.add("note", &who("alice"), "b", 2).unwrap();
+        let tip = r.commit(&who("alice"), "feat", 20).unwrap();
         r.checkout("main", false).unwrap();
         assert_eq!(r.head_commit().unwrap(), Some(base));
         assert_eq!(
-            r.merge("feature", "alice", "m", 30).unwrap(),
+            r.merge("feature", &who("alice"), "m", 30).unwrap(),
             Merge::FastForward(tip.clone())
         );
         assert_eq!(r.head_commit().unwrap(), Some(tip));
@@ -605,11 +737,11 @@ mod tests {
     #[test]
     fn merge_up_to_date() {
         let (_d, r) = repo();
-        r.add("note", "alice", "a", 1).unwrap();
-        r.commit("alice", "base", 10).unwrap();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        r.commit(&who("alice"), "base", 10).unwrap();
         r.create_branch("feature").unwrap();
         assert_eq!(
-            r.merge("feature", "alice", "m", 30).unwrap(),
+            r.merge("feature", &who("alice"), "m", 30).unwrap(),
             Merge::UpToDate
         );
     }
@@ -617,16 +749,18 @@ mod tests {
     #[test]
     fn merge_creates_a_merge_commit_and_unions_intent() {
         let (_d, r) = repo();
-        r.add("note", "alice", "base", 1).unwrap();
-        r.commit("alice", "base", 10).unwrap();
+        r.add("note", &who("alice"), "base", 1).unwrap();
+        r.commit(&who("alice"), "base", 10).unwrap();
         r.checkout("feature", true).unwrap();
-        r.add("note", "alice", "from-feature", 2).unwrap();
-        r.commit("alice", "feat", 20).unwrap();
+        r.add("note", &who("alice"), "from-feature", 2).unwrap();
+        r.commit(&who("alice"), "feat", 20).unwrap();
         r.checkout("main", false).unwrap();
-        r.add("note", "alice", "from-main", 3).unwrap();
-        r.commit("alice", "main work", 25).unwrap();
+        r.add("note", &who("alice"), "from-main", 3).unwrap();
+        r.commit(&who("alice"), "main work", 25).unwrap();
 
-        let outcome = r.merge("feature", "alice", "merge feature", 30).unwrap();
+        let outcome = r
+            .merge("feature", &who("alice"), "merge feature", 30)
+            .unwrap();
         let Merge::Merged(mid) = outcome else {
             panic!("expected a merge commit")
         };
@@ -642,10 +776,10 @@ mod tests {
     #[test]
     fn materialize_is_chronological_and_deduped() {
         let (_d, r) = repo();
-        r.add("decision", "alice", "second", 20).unwrap();
-        r.add("note", "bob", "first", 10).unwrap();
-        r.add("note", "carol", "first", 11).unwrap(); // duplicate intent text
-        r.commit("alice", "c", 30).unwrap();
+        r.add("decision", &who("alice"), "second", 20).unwrap();
+        r.add("note", &who("bob"), "first", 10).unwrap();
+        r.add("note", &who("carol"), "first", 11).unwrap(); // duplicate intent text
+        r.commit(&who("alice"), "c", 30).unwrap();
         let brief = r.materialize("HEAD", 100).unwrap();
         assert_eq!(brief.matches("first").count(), 1);
         assert!(brief.find("first").unwrap() < brief.find("second").unwrap());
@@ -655,8 +789,8 @@ mod tests {
     #[test]
     fn resolve_by_head_branch_and_prefix() {
         let (_d, r) = repo();
-        r.add("note", "alice", "a", 1).unwrap();
-        let c = r.commit("alice", "first", 10).unwrap();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        let c = r.commit(&who("alice"), "first", 10).unwrap();
         assert_eq!(r.resolve("HEAD").unwrap(), c);
         assert_eq!(r.resolve("main").unwrap(), c);
         assert_eq!(r.resolve(&c[..8]).unwrap(), c);
@@ -664,12 +798,25 @@ mod tests {
     }
 
     #[test]
+    fn resolve_handles_remote_tracking_ref() {
+        let (_d, r) = repo();
+        r.add("note", &who("alice"), "a", 1).unwrap();
+        let c = r.commit(&who("alice"), "first", 10).unwrap();
+        r.write_remote_ref("origin", "main", &c).unwrap();
+        assert_eq!(
+            r.read_remote_ref("origin", "main").unwrap(),
+            Some(c.clone())
+        );
+        assert_eq!(r.resolve("origin/main").unwrap(), c);
+    }
+
+    #[test]
     fn materialize_specific_commit_excludes_later_intent() {
         let (_d, r) = repo();
-        r.add("note", "alice", "early", 1).unwrap();
-        let first = r.commit("alice", "first", 10).unwrap();
-        r.add("note", "alice", "late", 2).unwrap();
-        r.commit("alice", "second", 20).unwrap();
+        r.add("note", &who("alice"), "early", 1).unwrap();
+        let first = r.commit(&who("alice"), "first", 10).unwrap();
+        r.add("note", &who("alice"), "late", 2).unwrap();
+        r.commit(&who("alice"), "second", 20).unwrap();
         let brief = r.materialize(&first, 100).unwrap();
         assert!(brief.contains("early"));
         assert!(!brief.contains("late"));
@@ -678,11 +825,11 @@ mod tests {
     #[test]
     fn materialize_head_follows_the_current_branch() {
         let (_d, r) = repo();
-        r.add("note", "alice", "on main", 1).unwrap();
-        r.commit("alice", "main", 10).unwrap();
+        r.add("note", &who("alice"), "on main", 1).unwrap();
+        r.commit(&who("alice"), "main", 10).unwrap();
         r.checkout("feature", true).unwrap();
-        r.add("note", "alice", "on feature", 2).unwrap();
-        r.commit("alice", "feat", 20).unwrap();
+        r.add("note", &who("alice"), "on feature", 2).unwrap();
+        r.commit(&who("alice"), "feat", 20).unwrap();
 
         // HEAD with no ref resolves to the current branch tip.
         assert!(r.materialize("HEAD", 100).unwrap().contains("on feature"));
@@ -696,8 +843,8 @@ mod tests {
     fn long_intent_round_trips_in_full() {
         let (_d, r) = repo();
         let long = "x".repeat(5000);
-        r.add("note", "alice", &long, 1).unwrap();
-        r.commit("alice", "c", 10).unwrap();
+        r.add("note", &who("alice"), &long, 1).unwrap();
+        r.commit(&who("alice"), "c", 10).unwrap();
         assert!(r.materialize("HEAD", 100).unwrap().contains(&long));
     }
 
@@ -707,9 +854,9 @@ mod tests {
         // read in the order intent was recorded, not by hash.
         let (_d, r) = repo();
         let s = 1_700_000_000 * 1_000_000_000;
-        r.add("note", "alice", "make-red", s + 10).unwrap();
-        r.add("note", "alice", "swap", s + 20).unwrap();
-        r.commit("alice", "c", s + 30).unwrap();
+        r.add("note", &who("alice"), "make-red", s + 10).unwrap();
+        r.add("note", &who("alice"), "swap", s + 20).unwrap();
+        r.commit(&who("alice"), "c", s + 30).unwrap();
         let brief = r.materialize("HEAD", s + 40).unwrap();
         assert!(brief.find("make-red").unwrap() < brief.find("swap").unwrap());
     }

@@ -95,9 +95,11 @@ storage
         everything sits under .lore, laid out like git:
 
         HEAD            current branch
+        config          identity and named remotes
         index           staged intent, not yet committed
         objects/<id>    content addressed entries and commits
         refs/heads/<b>  branch pointers
+        refs/remotes/   last-known commit on each remote branch
 
         an entry is one unit of intent.  its id is the hash of its text,
         so writing the same thing twice stores it once.  a commit groups
@@ -107,6 +109,26 @@ storage
         materialize walks the commit graph, unions every entry it can
         reach, sorts by time and prints the brief.  the brief is the
         program.  the agent and the files on disk are the interpreter.
+
+
+remotes
+        lore syncs like git.  set your identity, add a remote, push.
+
+        lore config user.email you@example.com
+        lore remote add origin /path/to/remote
+        lore push                     send the current branch
+        lore clone <url> [dir]        copy a remote into a new directory
+        lore fetch                    update remote-tracking refs
+        lore pull                     fetch, then merge
+
+        a remote url is a filesystem path today; http(s) is reserved for
+        lorehub, which will speak the same protocol (documented in
+        src/transport.rs).  push sends only the objects the remote lacks,
+        then moves the ref, and must fast-forward.
+
+        identity is a git-style name and email, recorded on every entry
+        and commit so a server can attribute work.  set it with lore
+        config, or override per command with --author and --email.
 
 
 agents

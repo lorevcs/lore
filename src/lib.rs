@@ -3,8 +3,11 @@
 //! [`cli`] for the command line surface.
 
 pub mod cli;
+pub mod config;
 pub mod object;
 pub mod repo;
+pub mod sync;
 pub mod time;
+pub mod transport;
 
 pub use repo::Repo;

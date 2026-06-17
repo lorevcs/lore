@@ -10,6 +10,8 @@ fn lore(dir: &Path, args: &[&str]) -> std::process::Output {
         .args(args)
         .current_dir(dir)
         .env("LORE_AUTHOR", "tester")
+        .env("LORE_EMAIL", "") // let config supply the email, deterministically
+        .env("LORE_TOKEN", "")
         .output()
         .expect("run lore")
 }
@@ -102,4 +104,47 @@ fn empty_commit_fails() {
     let out = lore(p, &["commit", "-m", "nothing"]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("nothing staged"));
+}
+
+/// Everything but the volatile "Generated:" line, for comparing two briefs.
+fn intent_body(brief: &str) -> String {
+    brief
+        .lines()
+        .filter(|l| !l.starts_with("Generated:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn remote_push_and_clone_round_trip() {
+    let w = TempDir::new().unwrap();
+    let a = w.path().join("a");
+    let srv = w.path().join("srv");
+    std::fs::create_dir_all(&a).unwrap();
+
+    ok(&a, &["init"]);
+    ok(&a, &["config", "user.email", "tester@lore.test"]);
+    ok(&a, &["add", "use sqlite for storage", "-k", "decision"]);
+    ok(&a, &["commit", "-m", "initial intent"]);
+
+    // identity = name from env, email from config
+    assert!(ok(&a, &["log"]).contains("tester <tester@lore.test>"));
+
+    // wire up a local-path remote and push to it
+    ok(&a, &["remote", "add", "origin", srv.to_str().unwrap()]);
+    assert!(ok(&a, &["remote"]).contains("origin"));
+    assert!(ok(&a, &["push"]).contains("pushed main to origin"));
+
+    // clone it into a sibling directory
+    ok(w.path(), &["clone", srv.to_str().unwrap(), "b"]);
+    let b = w.path().join("b");
+    assert!(b.join(".lore").is_dir());
+
+    // the clone reproduces the same intent and the same authorship
+    assert_eq!(
+        intent_body(&ok(&a, &["materialize"])),
+        intent_body(&ok(&b, &["materialize"]))
+    );
+    assert!(ok(&b, &["materialize"]).contains("use sqlite for storage"));
+    assert!(ok(&b, &["log"]).contains("tester <tester@lore.test>"));
 }
