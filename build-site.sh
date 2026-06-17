@@ -1,20 +1,21 @@
 #!/bin/sh
 # build-site.sh - generate the lorevcs.com static site from the README.
 # output goes to ./site, ready for: wrangler pages deploy site
+#
+# The README is plain text (hand-wrapped, indented). For the web we render it as
+# blocks: section words become <h2>, prose paragraphs reflow (wrapping cleanly on
+# any width), and aligned command/table blocks stay monospace. The ascii logo
+# scales to fit. Nothing scrolls sideways.
 set -eu
 
 out=site
 rm -rf "$out"
 mkdir -p "$out"
 
-# the install script is served verbatim at lorevcs.com/install.sh
 cp install.sh "$out/install.sh"
-
-# brand favicon and social-share (unfurl) image
 cp favicon.svg "$out/favicon.svg"
 cp og.png "$out/og.png"
 
-# serve the script as text rather than offering it as a download
 cat > "$out/_headers" <<'EOF'
 /*
   X-Content-Type-Options: nosniff
@@ -23,7 +24,6 @@ cat > "$out/_headers" <<'EOF'
   content-type: text/plain; charset=utf-8
 EOF
 
-# let crawlers in and point them at the sitemap
 cat > "$out/robots.txt" <<'EOF'
 User-agent: *
 Allow: /
@@ -37,8 +37,46 @@ cat > "$out/sitemap.xml" <<'EOF'
 </urlset>
 EOF
 
-# the landing page is the README. the ascii logo can't reflow, so it scales to
-# fit; the prose wraps at a readable size on narrow screens. same copy.
+# Render the README body (everything after the ascii logo) into HTML blocks.
+render_body() {
+	awk '
+	function esc(s){ gsub(/&/,"\\&amp;",s); gsub(/</,"\\&lt;",s); gsub(/>/,"\\&gt;",s); return s }
+	function linkify(s){ gsub(/https:\/\/[^ <]+/,"<a href=\"&\">&</a>",s); return s }
+	function emit(s,   i,t,pre,ind,minind,j,allcmd,any){
+		# preformatted if columns are aligned (3+ spaces) or every line is a command
+		pre=0
+		for(i=s;i<n;i++){ t=L[i]; sub(/^[ \t]+/,"",t); if(t ~ /   /){ pre=1; break } }
+		if(!pre){
+			allcmd=1; any=0
+			for(i=s;i<n;i++){ t=L[i]; sub(/^[ \t]+/,"",t); if(t=="") continue; any=1; if(t !~ /^(lore|curl|cargo|git) /){ allcmd=0; break } }
+			if(any && allcmd) pre=1
+		}
+		ind=(L[s] ~ /^[ \t]/)
+		if(pre){
+			minind=9999
+			for(i=s;i<n;i++){ match(L[i],/^ */); if(RLENGTH<minind) minind=RLENGTH }
+			printf "<pre class=\"pre%s\">", (ind?" ind":"")
+			for(i=s;i<n;i++){ printf "%s%s",(i>s?"\n":""),linkify(esc(substr(L[i],minind+1))) }
+			printf "</pre>\n"
+		} else {
+			j=""
+			for(i=s;i<n;i++){ t=L[i]; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); j=j (i>s?" ":"") t }
+			printf "<p class=\"prose%s\">%s</p>\n",(ind?" ind":""),linkify(esc(j))
+		}
+	}
+	function flush(   start){
+		if(n==0) return
+		start=0
+		if(L[0] ~ /^[a-z]+$/){ printf "<h2>%s</h2>\n",esc(L[0]); start=1 }
+		if(start<n) emit(start)
+		n=0
+	}
+	/^[ \t]*$/ { flush(); next }
+	{ L[n++]=$0 }
+	END { flush() }
+	'
+}
+
 split=$(awk '/^$/{print NR; exit}' README)
 {
 	cat <<'EOF'
@@ -78,21 +116,25 @@ split=$(awk '/^$/{print NR; exit}' README)
   main { background: #fffdf7; border: 2px solid #1a1a1a; box-shadow: 6px 6px 0 #1a1a1a;
     padding: 1.75rem 2rem; max-width: 100%; }
   /* the ascii logo can't reflow: scale it to fit, capped at 13px on wide screens */
-  .art { margin: 0 auto 1.25rem; width: fit-content; white-space: pre; overflow-x: auto;
+  .art { margin: 0 auto 1.5rem; width: fit-content; white-space: pre; overflow-x: auto;
     font-size: clamp(6px, calc((100vw - 4rem) / 46), 13px); line-height: 1.2; }
-  /* prose keeps its authored monospace alignment at a readable size; long
-     lines scroll horizontally rather than wrap into a ragged mess */
-  .body { margin: 0; font: inherit; font-size: 13px; line-height: 1.55;
-    white-space: pre; overflow-x: auto; }
+  /* prose reflows; aligned command/table blocks stay monospace. nothing
+     scrolls sideways. */
+  .body { max-width: 78ch; margin: 0 auto; font-size: 13px; line-height: 1.55; }
+  .body h2 { font: inherit; font-size: 13px; margin: 1.9em 0 0; }
+  .body .prose { margin: 0.7em 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .body .pre { margin: 0.7em 0 0; white-space: pre; }
+  .body .ind { padding-left: 8ch; }
   a { color: #297e78; text-decoration: underline; }
   a:hover { background: #297e78; color: #fffdf7; text-decoration: none; }
   ::selection { background: #1a1a1a; color: #fffdf7; }
-  /* a real heading for crawlers and screen readers; the visible one is ascii */
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   @media (max-width: 720px) {
     body { padding: 0.6rem; }
     main { padding: 1.1rem; box-shadow: 4px 4px 0 #1a1a1a; }
+    .body .pre { white-space: pre-wrap; }
+    .body .ind { padding-left: 1.5ch; }
   }
 </style>
 </head>
@@ -105,13 +147,11 @@ EOF
 		sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 	cat <<'EOF'
 </pre>
-<pre class="body">
+<div class="body">
 EOF
-	tail -n "+$((split + 1))" README |
-		sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
-			-e 's#\(https://[^ ]*\)#<a href="\1">\1</a>#g'
+	tail -n "+$((split + 1))" README | render_body
 	cat <<'EOF'
-</pre>
+</div>
 </main>
 </body>
 </html>
