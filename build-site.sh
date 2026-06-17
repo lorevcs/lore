@@ -80,9 +80,10 @@ split=$(awk '/^$/{print NR; exit}' README)
   /* the ascii logo can't reflow: scale it to fit, capped at 13px on wide screens */
   .art { margin: 0 auto 1.25rem; width: fit-content; white-space: pre; overflow-x: auto;
     font-size: clamp(6px, calc((100vw - 4rem) / 46), 13px); line-height: 1.2; }
-  /* prose stays readable and wraps on narrow screens */
+  /* prose keeps its authored monospace alignment at a readable size; long
+     lines scroll horizontally rather than wrap into a ragged mess */
   .body { margin: 0; font: inherit; font-size: 13px; line-height: 1.55;
-    white-space: pre-wrap; overflow-wrap: anywhere; max-width: 76ch; }
+    white-space: pre; overflow-x: auto; }
   a { color: #297e78; text-decoration: underline; }
   a:hover { background: #297e78; color: #fffdf7; text-decoration: none; }
   ::selection { background: #1a1a1a; color: #fffdf7; }
