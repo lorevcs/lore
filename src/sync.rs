@@ -1,5 +1,6 @@
 //! Cloning, pushing, fetching, and pulling intent between repositories. Sync is
-//! git-shaped: move the objects the other side is missing, then move the ref.
+//! git-shaped and batched: a push uploads all new objects in one request, and a
+//! fetch asks for the closure of the wanted tips minus what it already has.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -33,39 +34,47 @@ fn transport_for(repo: &Repo, remote: &str) -> Result<Box<dyn Transport>> {
     transport::open(&url, token())
 }
 
-/// Walk a commit's reachable object graph, fetching anything not held locally.
-fn fetch_graph(repo: &Repo, transport: &dyn Transport, tip: &str) -> Result<()> {
-    let mut stack = vec![tip.to_string()];
-    let mut seen = HashSet::new();
-    while let Some(id) = stack.pop() {
-        if !seen.insert(id.clone()) {
-            continue;
+/// Every object id (commits and the entries they record) reachable from `tip`.
+fn objects_reachable(repo: &Repo, tip: &str) -> Result<HashSet<String>> {
+    let mut objects = HashSet::new();
+    for cid in repo.reachable(tip)? {
+        for eid in repo.read_commit(&cid)?.entries {
+            objects.insert(eid);
         }
-        let bytes = if repo.has_object(&id) {
-            repo.object_bytes(&id)?
-        } else {
-            let bytes = transport.get_object(&id)?;
-            repo.write_object_bytes(&id, &bytes)?;
-            bytes
-        };
-        if let Object::Commit(c) = serde_json::from_slice(&bytes)? {
-            stack.extend(c.parents);
-            stack.extend(c.entries);
-        }
+        objects.insert(cid);
     }
-    Ok(())
+    Ok(objects)
 }
 
-/// Fetch every remote branch's objects and update tracking refs. Returns the
-/// remote's advertised refs.
+/// Commit tips this repository already holds, so a fetch can be incremental.
+fn local_tips(repo: &Repo, remote: &str) -> Result<Vec<String>> {
+    let mut tips = Vec::new();
+    for b in repo.branches()? {
+        if let Some(t) = repo.read_ref(&b)? {
+            tips.push(t);
+        }
+    }
+    for b in repo.remote_branches(remote)? {
+        if let Some(t) = repo.read_remote_ref(remote, &b)? {
+            tips.push(t);
+        }
+    }
+    Ok(tips)
+}
+
+/// Download the closure of every remote branch and update tracking refs.
 fn fetch_into(
     repo: &Repo,
     remote: &str,
     transport: &dyn Transport,
 ) -> Result<BTreeMap<String, String>> {
     let refs = transport.list_refs()?;
+    let want: Vec<String> = refs.values().cloned().collect();
+    let have = local_tips(repo, remote)?;
+    for obj in transport.download(&want, &have)? {
+        repo.write_object(&obj)?;
+    }
     for (branch, id) in &refs {
-        fetch_graph(repo, transport, id)?;
         repo.write_remote_ref(remote, branch, id)?;
     }
     Ok(refs)
@@ -111,8 +120,7 @@ pub fn push(repo: &Repo, remote: &str, branch: &str) -> Result<Push> {
         .read_ref(branch)?
         .ok_or_else(|| anyhow!("branch '{branch}' has no commits to push"))?;
 
-    // The remote's branch tip tells us what it already has, so we send only the
-    // new objects -- no per-object round-trip to check existence.
+    // The remote's branch tip tells us what it already has; send only the rest.
     let base = match transport.list_refs()?.get(branch) {
         Some(r) if r == &head => return Ok(Push::UpToDate),
         Some(r) if !repo.reachable(&head)?.contains(r) => {
@@ -127,26 +135,16 @@ pub fn push(repo: &Repo, remote: &str, branch: &str) -> Result<Push> {
         Some(b) => objects_reachable(repo, b)?,
         None => HashSet::new(),
     };
-    let mut sent = 0;
-    for id in head_objects.difference(&already_there) {
-        transport.put_object(id, &repo.object_bytes(id)?)?;
-        sent += 1;
-    }
+    let objects: Vec<Object> = head_objects
+        .difference(&already_there)
+        .map(|id| repo.read_object(id))
+        .collect::<Result<_>>()?;
+    let sent = objects.len();
+
+    transport.upload(&objects)?;
     transport.set_ref(branch, &head)?;
     repo.write_remote_ref(remote, branch, &head)?;
     Ok(Push::Pushed { objects: sent })
-}
-
-/// Every object id (commits and the entries they record) reachable from `tip`.
-fn objects_reachable(repo: &Repo, tip: &str) -> Result<HashSet<String>> {
-    let mut objects = HashSet::new();
-    for cid in repo.reachable(tip)? {
-        for eid in repo.read_commit(&cid)?.entries {
-            objects.insert(eid);
-        }
-        objects.insert(cid);
-    }
-    Ok(objects)
 }
 
 /// Fetch and merge a remote's matching branch into the current branch.

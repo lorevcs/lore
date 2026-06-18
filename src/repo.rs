@@ -163,31 +163,6 @@ impl Repo {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
-    /// Whether an object is already stored locally.
-    pub(crate) fn has_object(&self, id: &str) -> bool {
-        self.object_path(id).exists()
-    }
-
-    /// The raw stored bytes of an object, for handing to a remote.
-    pub(crate) fn object_bytes(&self, id: &str) -> Result<Vec<u8>> {
-        fs::read(self.object_path(id)).with_context(|| format!("no such object: {id}"))
-    }
-
-    /// Store object bytes received from a remote, after checking the bytes
-    /// actually hash to `id`, so a remote cannot poison the store.
-    pub(crate) fn write_object_bytes(&self, id: &str, bytes: &[u8]) -> Result<()> {
-        let obj: Object =
-            serde_json::from_slice(bytes).with_context(|| format!("invalid object {id}"))?;
-        if obj.id() != id {
-            bail!("object id mismatch: bytes for {id} hash to {}", obj.id());
-        }
-        let path = self.object_path(id);
-        if !path.exists() {
-            fs::write(path, bytes)?;
-        }
-        Ok(())
-    }
-
     pub(crate) fn read_commit(&self, id: &str) -> Result<Commit> {
         match self.read_object(id)? {
             Object::Commit(c) => Ok(c),
@@ -233,6 +208,24 @@ impl Repo {
         fs::create_dir_all(path.parent().expect("ref path has a parent"))?;
         fs::write(path, format!("{id}\n"))?;
         Ok(())
+    }
+
+    /// Branches tracked for a remote, empty if none are tracked yet.
+    pub(crate) fn remote_branches(&self, remote: &str) -> Result<Vec<String>> {
+        let dir = self.dir().join("refs/remotes").join(remote);
+        let mut names = Vec::new();
+        match fs::read_dir(&dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    if let Ok(name) = entry?.file_name().into_string() {
+                        names.push(name);
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        Ok(names)
     }
 
     /// Point HEAD at a branch (without touching the branch ref).

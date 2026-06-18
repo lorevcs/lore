@@ -1,37 +1,47 @@
 //! The remote transport seam. A [`Transport`] moves content-addressed objects
-//! and refs to and from somewhere else. Two backends ship today: a local
-//! filesystem remote (a path to another repo, like git's file remotes) and an
-//! HTTP remote (the protocol lorehub will implement).
+//! and refs in bulk. Two backends ship today: a local filesystem remote (a path
+//! to another repo) and an HTTP remote (the protocol lorehub will implement).
+//!
+//! Transfers are batched. A push uploads all new objects in one request; a fetch
+//! asks for everything reachable from the wanted tips that the client does not
+//! already have, and the remote returns the whole closure in one response.
 //!
 //! HTTP wire protocol:
 //! ```text
 //! GET  /refs            -> { "<branch>": "<commit id>", ... }
-//! HEAD /objects/{id}    -> 200 if present, 404 if missing
-//! GET  /objects/{id}    -> raw stored object bytes
-//! PUT  /objects/{id}    -> store body (idempotent, content-addressed)
-//! PUT  /refs/{branch}   -> body is the commit id
+//! POST /objects         <- a JSON array of objects to store (idempotent)
+//! POST /fetch           <- { "want": [ids], "have": [ids] }
+//!                       -> a JSON array of every object reachable from want
+//!                          that is not already reachable from have
+//! PUT  /refs/{branch}   <- the commit id
 //! ```
 //! Writes carry `Authorization: Bearer <token>` when a token is configured.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
-/// A place objects and refs can be pushed to and fetched from.
+use crate::object::Object;
+
+/// A place objects and refs can be pushed to and fetched from, in bulk.
 pub trait Transport {
     /// Branch name to commit id for every ref the remote advertises.
     fn list_refs(&self) -> Result<BTreeMap<String, String>>;
-    /// Whether the remote already stores this object.
-    fn has_object(&self, id: &str) -> Result<bool>;
-    /// The raw stored bytes of an object.
-    fn get_object(&self, id: &str) -> Result<Vec<u8>>;
-    /// Store an object (idempotent; the remote may keep an existing copy).
-    fn put_object(&self, id: &str, bytes: &[u8]) -> Result<()>;
+    /// Store objects (idempotent; the remote keeps any it already has).
+    fn upload(&self, objects: &[Object]) -> Result<()>;
+    /// Every object reachable from `want` that is not reachable from `have`.
+    fn download(&self, want: &[String], have: &[String]) -> Result<Vec<Object>>;
     /// Point a branch at a commit id.
     fn set_ref(&self, branch: &str, id: &str) -> Result<()>;
+}
+
+#[derive(Serialize, Deserialize)]
+struct FetchRequest {
+    want: Vec<String>,
+    have: Vec<String>,
 }
 
 /// Build a transport for a remote url. `http(s)://` is HTTP; anything else
@@ -57,6 +67,34 @@ impl LocalTransport {
             dir: root.join(".lore"),
         }
     }
+
+    fn read_object(&self, id: &str) -> Result<Option<Object>> {
+        match fs::read(self.dir.join("objects").join(id)) {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Commit ids, and all object ids (commits + entries), reachable from `tips`.
+    fn closure(&self, tips: &[String]) -> Result<(HashSet<String>, HashSet<String>)> {
+        let mut commits = HashSet::new();
+        let mut all = HashSet::new();
+        let mut stack = tips.to_vec();
+        while let Some(id) = stack.pop() {
+            if !commits.insert(id.clone()) {
+                continue;
+            }
+            if let Some(Object::Commit(c)) = self.read_object(&id)? {
+                all.insert(id);
+                for e in &c.entries {
+                    all.insert(e.clone());
+                }
+                stack.extend(c.parents);
+            }
+        }
+        Ok((commits, all))
+    }
 }
 
 impl Transport for LocalTransport {
@@ -81,22 +119,49 @@ impl Transport for LocalTransport {
         Ok(refs)
     }
 
-    fn has_object(&self, id: &str) -> Result<bool> {
-        Ok(self.dir.join("objects").join(id).exists())
-    }
-
-    fn get_object(&self, id: &str) -> Result<Vec<u8>> {
-        fs::read(self.dir.join("objects").join(id)).with_context(|| format!("no such object: {id}"))
-    }
-
-    fn put_object(&self, id: &str, bytes: &[u8]) -> Result<()> {
-        let objects = self.dir.join("objects");
-        fs::create_dir_all(&objects)?;
-        let path = objects.join(id);
-        if !path.exists() {
-            fs::write(path, bytes)?;
+    fn upload(&self, objects: &[Object]) -> Result<()> {
+        let dir = self.dir.join("objects");
+        fs::create_dir_all(&dir)?;
+        for obj in objects {
+            let path = dir.join(obj.id());
+            if !path.exists() {
+                fs::write(path, obj.to_bytes())?;
+            }
         }
         Ok(())
+    }
+
+    fn download(&self, want: &[String], have: &[String]) -> Result<Vec<Object>> {
+        let (have_commits, have_all) = self.closure(have)?;
+        let mut out = Vec::new();
+        let mut visited = HashSet::new();
+        let mut emitted = HashSet::new();
+        let mut stack = want.to_vec();
+        while let Some(id) = stack.pop() {
+            if have_commits.contains(&id) || !visited.insert(id.clone()) {
+                continue;
+            }
+            let obj = match self.read_object(&id)? {
+                Some(o) => o,
+                None => continue,
+            };
+            let (entries, parents) = match &obj {
+                Object::Commit(c) => (c.entries.clone(), c.parents.clone()),
+                Object::Entry(_) => continue,
+            };
+            if emitted.insert(id.clone()) {
+                out.push(obj);
+            }
+            for e in &entries {
+                if !have_all.contains(e) && emitted.insert(e.clone()) {
+                    if let Some(entry) = self.read_object(e)? {
+                        out.push(entry);
+                    }
+                }
+            }
+            stack.extend(parents);
+        }
+        Ok(out)
     }
 
     fn set_ref(&self, branch: &str, id: &str) -> Result<()> {
@@ -119,8 +184,8 @@ impl HttpTransport {
         HttpTransport {
             base: base.trim_end_matches('/').to_string(),
             token,
-            // One pooled agent so a push/fetch's many small requests reuse a
-            // keep-alive connection instead of a fresh tcp+tls handshake each.
+            // One pooled agent so a push/fetch's requests reuse a keep-alive
+            // connection instead of a fresh tcp+tls handshake each.
             agent: ureq::AgentBuilder::new().build(),
         }
     }
@@ -143,30 +208,22 @@ impl Transport for HttpTransport {
         Ok(serde_json::from_str(&body)?)
     }
 
-    fn has_object(&self, id: &str) -> Result<bool> {
-        match self
-            .request("HEAD", &format!("{}/objects/{id}", self.base))
-            .call()
-        {
-            Ok(_) => Ok(true),
-            Err(ureq::Error::Status(404, _)) => Ok(false),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn get_object(&self, id: &str) -> Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        self.request("GET", &format!("{}/objects/{id}", self.base))
-            .call()?
-            .into_reader()
-            .read_to_end(&mut buf)?;
-        Ok(buf)
-    }
-
-    fn put_object(&self, id: &str, bytes: &[u8]) -> Result<()> {
-        self.request("PUT", &format!("{}/objects/{id}", self.base))
-            .send_bytes(bytes)?;
+    fn upload(&self, objects: &[Object]) -> Result<()> {
+        self.request("POST", &format!("{}/objects", self.base))
+            .send_bytes(&serde_json::to_vec(objects)?)?;
         Ok(())
+    }
+
+    fn download(&self, want: &[String], have: &[String]) -> Result<Vec<Object>> {
+        let body = serde_json::to_vec(&FetchRequest {
+            want: want.to_vec(),
+            have: have.to_vec(),
+        })?;
+        let reader = self
+            .request("POST", &format!("{}/fetch", self.base))
+            .send_bytes(&body)?
+            .into_reader();
+        Ok(serde_json::from_reader(reader)?)
     }
 
     fn set_ref(&self, branch: &str, id: &str) -> Result<()> {
@@ -180,39 +237,73 @@ impl Transport for HttpTransport {
 mod tests {
     use super::*;
     use crate::config::Identity;
-    use crate::object::{Entry, Object};
+    use crate::object::{Commit, Entry};
     use tempfile::TempDir;
 
-    fn sample_entry(text: &str) -> (String, Vec<u8>) {
-        let obj = Object::Entry(Entry {
-            author: Identity::new("ray", "ray@x"),
+    fn who() -> Identity {
+        Identity::new("ray", "ray@x")
+    }
+
+    /// A two-commit chain: [entry one, commit c1, entry two, commit c2->c1].
+    fn chain() -> Vec<Object> {
+        let e1 = Object::Entry(Entry {
+            author: who(),
             timestamp: 1,
-            text: text.into(),
+            text: "one".into(),
         });
-        (obj.id(), obj.to_bytes())
+        let c1 = Object::Commit(Commit {
+            parents: vec![],
+            author: who(),
+            timestamp: 10,
+            message: "c1".into(),
+            entries: vec![e1.id()],
+        });
+        let e2 = Object::Entry(Entry {
+            author: who(),
+            timestamp: 2,
+            text: "two".into(),
+        });
+        let c2 = Object::Commit(Commit {
+            parents: vec![c1.id()],
+            author: who(),
+            timestamp: 20,
+            message: "c2".into(),
+            entries: vec![e2.id()],
+        });
+        vec![e1, c1, e2, c2]
+    }
+
+    fn check_round_trip(t: &dyn Transport) {
+        assert!(t.list_refs().unwrap().is_empty());
+        let objs = chain();
+        let (c1, e2, c2) = (objs[1].id(), objs[2].id(), objs[3].id());
+        t.upload(&objs).unwrap();
+        t.set_ref("main", &c2).unwrap();
+        assert_eq!(t.list_refs().unwrap().get("main"), Some(&c2));
+
+        // Full closure from the tip.
+        assert_eq!(t.download(std::slice::from_ref(&c2), &[]).unwrap().len(), 4);
+
+        // Incremental: a client that already has c1 gets only c2 and its entry.
+        let delta = t.download(std::slice::from_ref(&c2), &[c1]).unwrap();
+        let ids: HashSet<String> = delta.iter().map(|o| o.id()).collect();
+        assert_eq!(ids, HashSet::from([c2, e2]));
+
+        // Nothing new when the client already has the tip.
+        let tip = objs[3].id();
+        assert!(t
+            .download(std::slice::from_ref(&tip), std::slice::from_ref(&tip))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
     fn local_transport_round_trip() {
         let dir = TempDir::new().unwrap();
-        let t = LocalTransport::new(dir.path());
-        assert!(t.list_refs().unwrap().is_empty()); // nothing there yet
-
-        let (id, bytes) = sample_entry("use sqlite");
-        assert!(!t.has_object(&id).unwrap());
-        t.put_object(&id, &bytes).unwrap();
-        assert!(t.has_object(&id).unwrap());
-        assert_eq!(t.get_object(&id).unwrap(), bytes);
-
-        t.set_ref("main", "deadbeef").unwrap();
-        assert_eq!(
-            t.list_refs().unwrap().get("main").map(String::as_str),
-            Some("deadbeef")
-        );
+        check_round_trip(&LocalTransport::new(dir.path()));
     }
 
     /// A tiny HTTP server speaking the lore protocol, backed by a local store.
-    /// Returns its base url; the thread runs until the process exits.
     fn serve(dir: PathBuf) -> String {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let port = server.server_addr().to_ip().unwrap().port();
@@ -221,30 +312,23 @@ mod tests {
             for mut req in server.incoming_requests() {
                 let method = req.method().as_str().to_string();
                 let path = req.url().to_string();
+                let mut body = Vec::new();
+                req.as_reader().read_to_end(&mut body).unwrap();
                 let resp = if method == "GET" && path == "/refs" {
                     let json = serde_json::to_string(&backend.list_refs().unwrap()).unwrap();
                     tiny_http::Response::from_string(json).boxed()
-                } else if let Some(id) = path.strip_prefix("/objects/") {
-                    match method.as_str() {
-                        "HEAD" if backend.has_object(id).unwrap() => {
-                            tiny_http::Response::empty(200u16).boxed()
-                        }
-                        "GET" if backend.has_object(id).unwrap() => {
-                            tiny_http::Response::from_data(backend.get_object(id).unwrap()).boxed()
-                        }
-                        "PUT" => {
-                            let mut b = Vec::new();
-                            req.as_reader().read_to_end(&mut b).unwrap();
-                            backend.put_object(id, &b).unwrap();
-                            tiny_http::Response::empty(200u16).boxed()
-                        }
-                        _ => tiny_http::Response::empty(404u16).boxed(),
-                    }
-                } else if let Some(branch) = path.strip_prefix("/refs/") {
-                    let mut b = Vec::new();
-                    req.as_reader().read_to_end(&mut b).unwrap();
+                } else if method == "POST" && path == "/objects" {
+                    let objs: Vec<Object> = serde_json::from_slice(&body).unwrap();
+                    backend.upload(&objs).unwrap();
+                    tiny_http::Response::empty(200u16).boxed()
+                } else if method == "POST" && path == "/fetch" {
+                    let r: FetchRequest = serde_json::from_slice(&body).unwrap();
+                    let objs = backend.download(&r.want, &r.have).unwrap();
+                    tiny_http::Response::from_string(serde_json::to_string(&objs).unwrap()).boxed()
+                } else if method == "PUT" {
+                    let branch = path.strip_prefix("/refs/").unwrap();
                     backend
-                        .set_ref(branch, String::from_utf8(b).unwrap().trim())
+                        .set_ref(branch, String::from_utf8(body).unwrap().trim())
                         .unwrap();
                     tiny_http::Response::empty(200u16).boxed()
                 } else {
@@ -260,25 +344,11 @@ mod tests {
     fn http_transport_round_trip() {
         let dir = TempDir::new().unwrap();
         let base = serve(dir.path().to_path_buf());
-        let t = HttpTransport::new(&base, None);
-
-        assert!(t.list_refs().unwrap().is_empty());
-        let (id, bytes) = sample_entry("over http");
-        assert!(!t.has_object(&id).unwrap()); // 404 -> false, not an error
-        t.put_object(&id, &bytes).unwrap();
-        assert!(t.has_object(&id).unwrap());
-        assert_eq!(t.get_object(&id).unwrap(), bytes);
-
-        t.set_ref("main", "cafef00d").unwrap();
-        assert_eq!(
-            t.list_refs().unwrap().get("main").map(String::as_str),
-            Some("cafef00d")
-        );
+        check_round_trip(&HttpTransport::new(&base, None));
     }
 
     #[test]
     fn open_dispatches_on_scheme() {
-        // Smoke check: scheme routing builds the right backend without panicking.
         assert!(open("https://lorehub.com/r", None).is_ok());
         assert!(open("/tmp/some/repo", None).is_ok());
         assert!(open("file:///tmp/some/repo", None).is_ok());
@@ -286,7 +356,6 @@ mod tests {
 
     #[test]
     fn clone_and_push_over_http() {
-        // Drive the real HttpTransport through sync against the mock server.
         let remote = TempDir::new().unwrap();
         let base = serve(remote.path().to_path_buf());
 
