@@ -111,6 +111,7 @@ impl Transport for LocalTransport {
 pub struct HttpTransport {
     base: String,
     token: Option<String>,
+    agent: ureq::Agent,
 }
 
 impl HttpTransport {
@@ -118,11 +119,14 @@ impl HttpTransport {
         HttpTransport {
             base: base.trim_end_matches('/').to_string(),
             token,
+            // One pooled agent so a push/fetch's many small requests reuse a
+            // keep-alive connection instead of a fresh tcp+tls handshake each.
+            agent: ureq::AgentBuilder::new().build(),
         }
     }
 
     fn request(&self, method: &str, url: &str) -> ureq::Request {
-        let req = ureq::request(method, url);
+        let req = self.agent.request(method, url);
         match &self.token {
             Some(t) => req.set("Authorization", &format!("Bearer {t}")),
             None => req,

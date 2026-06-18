@@ -111,33 +111,42 @@ pub fn push(repo: &Repo, remote: &str, branch: &str) -> Result<Push> {
         .read_ref(branch)?
         .ok_or_else(|| anyhow!("branch '{branch}' has no commits to push"))?;
 
-    let remote_refs = transport.list_refs()?;
-    if let Some(remote_id) = remote_refs.get(branch) {
-        if remote_id == &head {
-            return Ok(Push::UpToDate);
+    // The remote's branch tip tells us what it already has, so we send only the
+    // new objects -- no per-object round-trip to check existence.
+    let base = match transport.list_refs()?.get(branch) {
+        Some(r) if r == &head => return Ok(Push::UpToDate),
+        Some(r) if !repo.reachable(&head)?.contains(r) => {
+            bail!("non-fast-forward push to {remote}/{branch}; fetch and merge first")
         }
-        if !repo.reachable(&head)?.contains(remote_id) {
-            bail!("non-fast-forward push to {remote}/{branch}; fetch and merge first");
-        }
-    }
+        Some(r) => Some(r.clone()),
+        None => None,
+    };
 
+    let head_objects = objects_reachable(repo, &head)?;
+    let already_there = match &base {
+        Some(b) => objects_reachable(repo, b)?,
+        None => HashSet::new(),
+    };
+    let mut sent = 0;
+    for id in head_objects.difference(&already_there) {
+        transport.put_object(id, &repo.object_bytes(id)?)?;
+        sent += 1;
+    }
+    transport.set_ref(branch, &head)?;
+    repo.write_remote_ref(remote, branch, &head)?;
+    Ok(Push::Pushed { objects: sent })
+}
+
+/// Every object id (commits and the entries they record) reachable from `tip`.
+fn objects_reachable(repo: &Repo, tip: &str) -> Result<HashSet<String>> {
     let mut objects = HashSet::new();
-    for cid in repo.reachable(&head)? {
+    for cid in repo.reachable(tip)? {
         for eid in repo.read_commit(&cid)?.entries {
             objects.insert(eid);
         }
         objects.insert(cid);
     }
-    let mut sent = 0;
-    for id in &objects {
-        if !transport.has_object(id)? {
-            transport.put_object(id, &repo.object_bytes(id)?)?;
-            sent += 1;
-        }
-    }
-    transport.set_ref(branch, &head)?;
-    repo.write_remote_ref(remote, branch, &head)?;
-    Ok(Push::Pushed { objects: sent })
+    Ok(objects)
 }
 
 /// Fetch and merge a remote's matching branch into the current branch.
@@ -213,7 +222,11 @@ mod tests {
 
         a.add(&who("ray"), "two", 2).unwrap();
         let a2 = a.commit(&who("ray"), "c2", 20).unwrap();
-        push(&a, "origin", "main").unwrap();
+        // only the new commit and its entry travel, not the whole history
+        assert_eq!(
+            push(&a, "origin", "main").unwrap(),
+            Push::Pushed { objects: 2 }
+        );
 
         let refs = fetch(&c, "origin").unwrap();
         assert_eq!(refs.get("main"), Some(&a2));
