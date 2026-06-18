@@ -69,6 +69,7 @@ use
         lore status                        show staged intent
         lore commit -m "initial intent"
         lore log
+        lore show <commit>                 a commit and its intent
         lore materialize                   print the brief for an agent
 
         branches and merges work like git:
@@ -142,8 +143,9 @@ agents
                 lore add "the choice you made and why"
 
             intent, never code.  "rate limit the api, 100/min per key"
-            is intent.  "edited middleware.rs line 42" is not.  it is
-            cheap, do it often.
+            is intent.  "edited middleware.rs line 42" is not.  record
+            durable rules for how the project works, not one-off bug
+            reports or anything personal.  it is cheap, do it often.
 
         2.  commit related intent once a unit of work lands:
 

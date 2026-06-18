@@ -89,6 +89,28 @@ fn materialize_to_file() {
 }
 
 #[test]
+fn show_prints_full_message_log_abbreviates() {
+    let dir = TempDir::new().unwrap();
+    let p = dir.path();
+    ok(p, &["init"]);
+    ok(p, &["add", "use sqlite for storage"]);
+    let long = "a very long commit message that the log view abbreviates but show keeps in full so nothing is lost";
+    ok(p, &["commit", "-m", long]);
+
+    let log = ok(p, &["log"]);
+    assert!(log.contains("..."), "log should abbreviate: {log}");
+    assert!(!log.contains("nothing is lost"), "log should drop the tail");
+
+    let show = ok(p, &["show"]);
+    assert!(show.starts_with("commit "));
+    assert!(show.contains(long), "show should keep the full message");
+    assert!(
+        show.contains("use sqlite for storage"),
+        "show should list the intent"
+    );
+}
+
+#[test]
 fn commands_fail_outside_a_repo() {
     let dir = TempDir::new().unwrap();
     let out = lore(dir.path(), &["status"]);

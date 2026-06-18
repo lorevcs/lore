@@ -37,6 +37,13 @@ pub struct Status {
     pub staged: Vec<(String, Entry)>,
 }
 
+/// A commit with the entries it recorded, returned by [`Repo::show`].
+pub struct CommitView {
+    pub id: String,
+    pub commit: Commit,
+    pub entries: Vec<(String, Entry)>,
+}
+
 /// The result of a merge.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Merge {
@@ -336,6 +343,22 @@ impl Repo {
             .collect::<Result<Vec<_>>>()?;
         commits.sort_by(|a, b| b.1.timestamp.cmp(&a.1.timestamp).then(b.0.cmp(&a.0)));
         Ok(commits)
+    }
+
+    /// A specific commit and the entries it recorded.
+    pub fn show(&self, reference: &str) -> Result<CommitView> {
+        let id = self.resolve(reference)?;
+        let commit = self.read_commit(&id)?;
+        let entries = commit
+            .entries
+            .iter()
+            .map(|e| Ok((e.clone(), self.read_entry(e)?)))
+            .collect::<Result<_>>()?;
+        Ok(CommitView {
+            id,
+            commit,
+            entries,
+        })
     }
 
     /// Branch names, with the current branch always present, sorted.
@@ -856,5 +879,19 @@ mod tests {
         r.commit(&who("alice"), "c", s + 30).unwrap();
         let brief = r.materialize("HEAD", s + 40).unwrap();
         assert!(brief.find("make-red").unwrap() < brief.find("swap").unwrap());
+    }
+
+    #[test]
+    fn show_returns_commit_and_entries() {
+        let (_d, r) = repo();
+        r.add(&who("ray"), "use sqlite", 1).unwrap();
+        let c = r
+            .commit(&who("ray"), "a long message show keeps in full", 10)
+            .unwrap();
+        let v = r.show("HEAD").unwrap();
+        assert_eq!(v.id, c);
+        assert_eq!(v.commit.message, "a long message show keeps in full");
+        assert_eq!(v.entries.len(), 1);
+        assert_eq!(v.entries[0].1.text, "use sqlite");
     }
 }

@@ -1,5 +1,5 @@
 //! The command line surface. Mirrors git so it feels familiar: `init`, `add`,
-//! `status`, `commit`, `log`, `branch`, `checkout`, `merge`, `materialize`, plus
+//! `status`, `commit`, `log`, `show`, `branch`, `checkout`, `merge`, plus
 //! remotes (`clone`, `push`, `fetch`, `pull`, `remote`) and `config`.
 
 use std::path::{Path, PathBuf};
@@ -52,6 +52,12 @@ pub enum Command {
     },
     /// Show commit history, newest first
     Log,
+    /// Show a commit's full message and the intent it recorded
+    Show {
+        /// Branch or commit to show
+        #[arg(default_value = "HEAD")]
+        reference: String,
+    },
     /// List branches, or create one with a name
     Branch { name: Option<String> },
     /// Switch to another branch
@@ -177,9 +183,25 @@ pub fn run(cli: Cli, cwd: &Path) -> Result<()> {
                     short(&id),
                     crate::time::format_ns(c.timestamp),
                     c.author.label(),
-                    c.message,
+                    abbrev(&c.message, 50),
                     c.entries.len()
                 );
+            }
+        }
+        Command::Show { reference } => {
+            let repo = Repo::discover(cwd)?;
+            let v = repo.show(&reference)?;
+            let c = &v.commit;
+            println!("commit {}", v.id);
+            println!("author {}", c.author.label());
+            println!("date   {}", crate::time::format_ns(c.timestamp));
+            if !c.parents.is_empty() {
+                let parents: Vec<&str> = c.parents.iter().map(|p| short(p)).collect();
+                println!("parent {}", parents.join(" "));
+            }
+            println!("\n{}\n", c.message);
+            for (eid, e) in &v.entries {
+                println!("  {} {}", short(eid), e.text);
             }
         }
         Command::Branch { name } => {
@@ -366,6 +388,17 @@ fn oneline(text: &str) -> String {
     text.trim().lines().next().unwrap_or("").to_string()
 }
 
+// First line of a message, truncated for one-line listings like `log`. Messages
+// can be long; `lore show` prints them in full.
+fn abbrev(text: &str, max: usize) -> String {
+    let line = text.trim().lines().next().unwrap_or("");
+    if line.chars().count() > max {
+        format!("{}...", line.chars().take(max).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,5 +493,30 @@ mod tests {
     fn oneline_is_untruncated_first_line() {
         assert_eq!(oneline("hi\nthere"), "hi");
         assert_eq!(oneline(&"x".repeat(100)).len(), 100);
+    }
+
+    #[test]
+    fn parses_show_defaults_to_head() {
+        match Cli::try_parse_from(["lore", "show"]).unwrap().command {
+            Command::Show { reference } => assert_eq!(reference, "HEAD"),
+            _ => panic!("wrong command"),
+        }
+        match Cli::try_parse_from(["lore", "show", "abc123"])
+            .unwrap()
+            .command
+        {
+            Command::Show { reference } => assert_eq!(reference, "abc123"),
+            _ => panic!("wrong command"),
+        }
+    }
+
+    #[test]
+    fn abbrev_truncates_long_first_line() {
+        assert_eq!(abbrev("short", 50), "short");
+        assert_eq!(abbrev("hi\nthere", 50), "hi");
+        assert_eq!(
+            abbrev(&"x".repeat(80), 50),
+            format!("{}...", "x".repeat(50))
+        );
     }
 }
