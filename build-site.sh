@@ -41,7 +41,7 @@ EOF
 render_body() {
 	awk '
 	function esc(s){ gsub(/&/,"\\&amp;",s); gsub(/</,"\\&lt;",s); gsub(/>/,"\\&gt;",s); return s }
-	function linkify(s){ gsub(/https:\/\/[^ <]+/,"<a href=\"&\">&</a>",s); return s }
+	function linkify(s){ gsub(/https:\/\/[^ <]*[^ <.,:!?]/,"<a href=\"&\">&</a>",s); return s }
 	function emit(s,   i,t,hasgap,allcmd,any,ind,minind,j,line,k,v){
 		# aligned columns (3+ spaces) -> dual render (pre for desktop, stacked for
 		# mobile); all-command block -> <pre>; anything else -> reflowing prose.

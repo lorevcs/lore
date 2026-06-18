@@ -39,6 +39,12 @@ reconciles the working tree to match it.
 the code is build output.  the intent is the source.
 
 
+quickstart
+        curl -fsSL https://lorevcs.com/install.sh | sh
+        lore clone https://hub.lorevcs.com/lore/lore-example
+        lore materialize | claude
+
+
 why
         a normal vcs remembers every line you typed.  lore remembers why
         you typed it.  rebuilding from intent does not hand you the same
@@ -122,14 +128,29 @@ remotes
         lore fetch                    update remote-tracking refs
         lore pull                     fetch, then merge
 
-        a remote url is a filesystem path today; http(s) is reserved for
-        lorehub, which will speak the same protocol (documented in
-        src/transport.rs).  push sends only the objects the remote lacks,
-        then moves the ref, and must fast-forward.
+        a remote url is a filesystem path or a lorehub url (see below).
+        push sends only the objects the remote lacks, then moves the
+        ref, and must fast-forward.
 
         identity is a git-style name and email, recorded on every entry
         and commit so a server can attribute work.  set it with lore
         config, or override per command with --author and --email.
+
+
+lorehub
+        lorehub hosts lore repositories over https, the way github hosts
+        git.  it is live at https://hub.lorevcs.com.
+
+        lore clone https://hub.lorevcs.com/<owner>/<repo>
+        lore remote add origin https://hub.lorevcs.com/<owner>/<repo>
+        lore push
+
+        reads are public.  pushing needs an account and a token from
+        https://hub.lorevcs.com, put in the LORE_TOKEN environment
+        variable.  every commit carries an author email, so your
+        contribution history follows you across repositories.
+
+        try it:  lore clone https://hub.lorevcs.com/lore/lore-example
 
 
 agents
