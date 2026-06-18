@@ -154,6 +154,8 @@ agents
         3.  to rebuild, materialize and reconcile the tree to the brief.
             do not commit the brief.
 
+        new to lore?  the full guide is at https://lorevcs.com.
+
 
 status
         experimental.  the on disk format is small and will change.
